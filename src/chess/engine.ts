@@ -174,7 +174,7 @@ function escolherLanceAprendido(lances: LanceAprendido[] | undefined): string | 
 
 /**
  * Escolhe o lance da máquina, em três camadas:
- * 1. Livro de partidas de referência (games.pgn), se a posição aparecer nele;
+ * 1. Livro de partidas de referência (livro.json), se a posição aparecer nele — resposta na hora;
  * 2. O que a própria máquina já aprendeu jogando (vitórias/derrotas/empates registrados a partir
  *    dessa posição, tanto em partidas reais quanto no modo demonstração) — quanto mais partidas
  *    concluídas, mais essa camada tem pra oferecer;

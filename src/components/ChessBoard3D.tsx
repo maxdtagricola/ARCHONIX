@@ -7,8 +7,11 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { clone as clonarComEsqueleto } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { Chess, type Square } from 'chess.js'
 import { Button } from './ui/Basics'
-import { carregarLivroDeAberturas, type LivroDeAberturas } from '../chess/pgnBook'
+import { useFecharComEsc } from '../teclaEsc'
+import { buscarNoLivro, carregarLivroDeAberturas, type LivroDeAberturas } from '../chess/pgnBook'
 import { escolherJogadaDaMaquina } from '../chess/engine'
+import { ambienteDoTabuleiro, ambienteTocando, configurarSom, destravarSom, somDestravado, tocarPassos, tocarSom } from '../chess/sons'
+import { useEstadoPersistente } from '../estadoPersistente'
 import { listPartidasDoJogador, novaPartida, novaPartidaDemonstracao, salvarPartida, type PartidaXadrez } from '../db/xadrezRepo'
 import { registrarAprendizadoDaPartida, type ResultadoPartida as ResultadoPartidaXadrez } from '../db/xadrezAprendizadoRepo'
 
@@ -39,6 +42,8 @@ const CAMERA_Z = 10
 // visível se concentra um pouco acima da metade) — medido por diferença de pixels contra o
 // tabuleiro vazio, não chutado
 const ALTURA_VISUAL_PECA = 0.55
+/** De que lado do tabuleiro a câmera fica: 1 = das brancas, -1 = das pretas (ver virarCameraPara). */
+let ladoDaCamera: 1 | -1 = 1
 
 /**
  * Posição X/Z de uma peça na casa, com uma pequena correção de perspectiva no eixo X: a câmera vê o
@@ -51,7 +56,7 @@ const ALTURA_VISUAL_PECA = 0.55
  */
 function squareToPosPeca(square: string): { x: number; z: number } {
   const { x, z } = squareToPos(square)
-  const profundidadeCasa = CAMERA_Y * CAMERA_Y + CAMERA_Z * (CAMERA_Z - z)
+  const profundidadeCasa = CAMERA_Y * CAMERA_Y + CAMERA_Z * (CAMERA_Z - z * ladoDaCamera)
   const fator = (CAMERA_Y * ALTURA_VISUAL_PECA) / profundidadeCasa
   return { x: x * (1 - fator), z }
 }
@@ -911,8 +916,12 @@ const VELOCIDADE_CASAS_POR_SEGUNDO = 2.6
 const DURACAO_LANCE_MIN_MS = 650
 const DURACAO_LANCE_MAX_MS = 2400
 const PASSADAS_POR_CASA = 1.6
+/** Meia-volta do tabuleiro ao escolher a cor das peças. */
+const GIRO_CAMERA_MS = 1400
 /** Pausa "pensando" da máquina antes de mover, pro ritmo geral ficar mais compassado. */
 const PAUSA_MAQUINA_MS = 700
+/** Com o lance no livro não há o que calcular: só o suficiente pra resposta não vir no mesmo instante. */
+const PAUSA_MAQUINA_LIVRO_MS = 200
 /** Intervalo entre lances no modo demonstração (máquina x máquina) — de 10 a 15s por lance com o tabuleiro cheio. */
 const DEMO_INTERVALO_MIN_MS = 10000
 const DEMO_INTERVALO_MAX_MS = 15000
@@ -960,7 +969,7 @@ const DISTANCIA_REVERENCIA = 0.75
 
 /** Até onde vai o golpe corpo a corpo (em casas, no tamanho do modelo): a peça para a essa
  * distância da vítima pra golpear — o peão com a espada alcança mais longe que a torre com o punho/pé. */
-const ALCANCE_GOLPE: Record<string, number> = { p: 0.62, r: 0.5 }
+const ALCANCE_GOLPE: Record<string, number> = { p: 0.62, r: 0.77 }
 
 /** Acima disso (em casas, no tamanho do modelo) a peça corre em vez de andar. */
 const DISTANCIA_PRA_CORRER = 2.2
@@ -1031,6 +1040,7 @@ function deslocarRPG(mesh: THREE.Object3D, de: { x: number; z: number }, para: {
   if (!clipe.isRunning()) clipe.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.2).play()
   const aceleracao = Math.min(TEMPO_ACELERACAO_S, (0.5 * distancia) / velocidade)
   const total = distancia / velocidade + aceleracao
+  tocarPassos(mesh.userData.tipo as string, total, corre)
   const inicio = performance.now()
   function passo(agora: number) {
     const t = Math.min(total, (agora - inicio) / 1000)
@@ -1071,6 +1081,7 @@ function saltarRPG(
   const dados = mesh.userData.dadosRPG as DadosRPG
   const decola = dados.segundoDecola ?? 0.4
   const pousa = dados.segundoPousa ?? 1.13
+  tocarSom('salto:n')
   tocarClipeRPGUmaVez(mesh, 'Mortal', { entrada: 0.15, voltarAoParado: false, aoTerminar: depois })
   const inicio = performance.now()
   function passo(agora: number) {
@@ -1078,8 +1089,12 @@ function saltarRPG(
     const fracao = Math.min(1, Math.max(0, (t - decola) / (pousa - decola)))
     mesh.position.x = de.x + (para.x - de.x) * fracao
     mesh.position.z = de.z + (para.z - de.z) * fracao
-    if (fracao < 1) requestAnimationFrame(passo)
-    else aoPousar?.()
+    if (fracao < 1) {
+      requestAnimationFrame(passo)
+      return
+    }
+    tocarSom('pouso:n')
+    aoPousar?.()
   }
   requestAnimationFrame(passo)
 }
@@ -1897,6 +1912,386 @@ function posicaoDoOsso(mesh: THREE.Object3D, nome: string): THREE.Vector3 {
 }
 
 // ---------------------------------------------------------------------------
+// Marreta da torre — na captura a torre vai até a vítima, a marreta surge nas mãos dela, sobe acima
+// da cabeça e desce com tudo: o tabuleiro treme, a madeira racha, sobe poeira e a vítima fica
+// achatada. O corpo não segue um clipe do modelo: a cada quadro, por cima do "Parado", a pose da
+// marreta é calculada e os braços são levados até o cabo, pras duas mãos ficarem nele o tempo todo.
+// ---------------------------------------------------------------------------
+const COMPRIMENTO_CABO_MARRETA = 0.72
+/** Onde cada mão segura, a partir da ponta do cabo. */
+const PEGADA_MAO_ESQUERDA = 0.03
+const PEGADA_MAO_DIREITA = 0.12
+
+const geoCaboMarreta = new THREE.CylinderGeometry(0.017, 0.022, COMPRIMENTO_CABO_MARRETA + 0.05, 16)
+const geoPegadaMarreta = new THREE.CylinderGeometry(0.026, 0.026, 0.22, 16)
+const geoPonteiraMarreta = new THREE.SphereGeometry(0.034, 16, 12)
+const geoCabecaMarreta = new RoundedBoxGeometry(0.25, 0.25, 0.36, 3, 0.03)
+const geoCintaMarreta = new RoundedBoxGeometry(0.265, 0.265, 0.04, 2, 0.012)
+const geoFaceMarreta = new RoundedBoxGeometry(0.27, 0.27, 0.05, 2, 0.015)
+const geoAmeiaMarreta = new RoundedBoxGeometry(0.075, 0.075, 0.06, 2, 0.012)
+const geoGemaMarreta = new THREE.SphereGeometry(0.036, 16, 12)
+
+/** A marreta é da peça: os mesmos materiais do corpo (armadura), dos detalhes, do dourado da coroa e
+ * do brilho, e as ameias da torre nas duas faces. Montada com a ponta do cabo na origem, o cabo pra
+ * cima (+Y) e as faces da cabeça em Z: girando em X, ela desce batendo com a face. */
+function criarMarreta(cor: 'w' | 'b'): THREE.Group {
+  const { armadura, detalhe, brilho } = materiaisPorFaccao[cor]
+  const marreta = new THREE.Group()
+  const topo = COMPRIMENTO_CABO_MARRETA
+  const pecas: [THREE.BufferGeometry, THREE.Material, number, number, number][] = [
+    [geoCaboMarreta, detalhe, 0, topo / 2, 0],
+    [geoPegadaMarreta, armadura, 0, 0.1, 0],
+    [geoPonteiraMarreta, materialCoroa, 0, -0.01, 0],
+    [geoCabecaMarreta, armadura, 0, topo, 0],
+    [geoCintaMarreta, materialCoroa, 0, topo, 0],
+    [geoFaceMarreta, detalhe, 0, topo, 0.175],
+    [geoFaceMarreta, detalhe, 0, topo, -0.175],
+    [geoGemaMarreta, brilho, 0.13, topo, 0],
+    [geoGemaMarreta, brilho, -0.13, topo, 0],
+  ]
+  // as ameias, nos quatro cantos de cada face
+  for (const face of [1, -1]) {
+    for (const x of [-0.095, 0.095]) {
+      for (const y of [-0.095, 0.095]) pecas.push([geoAmeiaMarreta, detalhe, x, topo + y, face * 0.225])
+    }
+  }
+  for (const [geometria, material, x, y, z] of pecas) {
+    const parte = new THREE.Mesh(geometria, material)
+    parte.position.set(x, y, z)
+    parte.castShadow = true
+    marreta.add(parte)
+  }
+  return marreta
+}
+
+/** A marreta vista de lado: `angulo` é o giro do cabo a partir da vertical (positivo pra frente);
+ * `y`/`z`, a ponta do cabo; `tronco`, quanto o corpo inclina (positivo pra frente). */
+interface PoseMarreta {
+  angulo: number
+  y: number
+  z: number
+  tronco: number
+}
+const POSE_MARRETA_GUARDA: PoseMarreta = { angulo: 0.45, y: 0.43, z: 0.16, tronco: 0 }
+const POSE_MARRETA_ERGUIDA: PoseMarreta = { angulo: -0.75, y: 0.52, z: 0.04, tronco: -0.24 }
+const POSE_MARRETA_PANCADA: PoseMarreta = { angulo: 2.06, y: 0.47, z: 0.14, tronco: 0.55 }
+
+const MARRETA_SURGIU_MS = 240
+const MARRETA_ERGUIDA_MS = 640
+const MARRETA_NO_ALTO_ATE_MS = 780
+const MARRETA_PANCADA_MS = 920
+const MARRETA_CRAVADA_ATE_MS = 1350
+const MARRETA_FIM_MS = 1700
+
+function misturarPoses(a: PoseMarreta, b: PoseMarreta, t: number): PoseMarreta {
+  const m = (x: number, y: number) => x + (y - x) * t
+  return { angulo: m(a.angulo, b.angulo), y: m(a.y, b.y), z: m(a.z, b.z), tronco: m(a.tronco, b.tronco) }
+}
+const suaveMarreta = (t: number) => t * t * (3 - 2 * t)
+
+/** Em que ponto do golpe a marreta está: `peso` é quanto os braços seguem o cabo (0 = o clipe
+ * normal da peça) e `escala`, o tamanho da marreta, que surge e some nas mãos. */
+function poseDaMarreta(decorrido: number): { pose: PoseMarreta; peso: number; escala: number } {
+  if (decorrido < MARRETA_SURGIU_MS) {
+    const t = suaveMarreta(decorrido / MARRETA_SURGIU_MS)
+    return { pose: POSE_MARRETA_GUARDA, peso: t, escala: t }
+  }
+  if (decorrido < MARRETA_ERGUIDA_MS) {
+    const t = suaveMarreta((decorrido - MARRETA_SURGIU_MS) / (MARRETA_ERGUIDA_MS - MARRETA_SURGIU_MS))
+    return { pose: misturarPoses(POSE_MARRETA_GUARDA, POSE_MARRETA_ERGUIDA, t), peso: 1, escala: 1 }
+  }
+  if (decorrido < MARRETA_NO_ALTO_ATE_MS) {
+    // no alto, um tremor do peso, antes de descer
+    const tremor = 0.02 * Math.sin(decorrido / 18)
+    return { pose: { ...POSE_MARRETA_ERGUIDA, angulo: POSE_MARRETA_ERGUIDA.angulo + tremor }, peso: 1, escala: 1 }
+  }
+  if (decorrido < MARRETA_PANCADA_MS) {
+    const t = (decorrido - MARRETA_NO_ALTO_ATE_MS) / (MARRETA_PANCADA_MS - MARRETA_NO_ALTO_ATE_MS)
+    return { pose: misturarPoses(POSE_MARRETA_ERGUIDA, POSE_MARRETA_PANCADA, t * t * t), peso: 1, escala: 1 }
+  }
+  if (decorrido < MARRETA_CRAVADA_ATE_MS) {
+    // pulo da cabeça da marreta logo depois de bater
+    const t = (decorrido - MARRETA_PANCADA_MS) / (MARRETA_CRAVADA_ATE_MS - MARRETA_PANCADA_MS)
+    const quique = 0.09 * Math.sin(Math.min(1, t * 2.5) * Math.PI)
+    return { pose: { ...POSE_MARRETA_PANCADA, angulo: POSE_MARRETA_PANCADA.angulo - quique }, peso: 1, escala: 1 }
+  }
+  const t = suaveMarreta(Math.min(1, (decorrido - MARRETA_CRAVADA_ATE_MS) / (MARRETA_FIM_MS - MARRETA_CRAVADA_ATE_MS)))
+  return { pose: misturarPoses(POSE_MARRETA_PANCADA, POSE_MARRETA_GUARDA, t), peso: 1 - t, escala: 1 - suaveMarreta(Math.max(0, t * 2 - 1)) }
+}
+
+function ossoRPG(mesh: THREE.Object3D, nome: string): THREE.Object3D | undefined {
+  return mesh.getObjectByName(`mixamorig${nome}`) ?? mesh.getObjectByName(`mixamorig:${nome}`)
+}
+
+/** Gira um osso por um giro dado no mundo, levando junto o que vem depois dele. */
+function girarOssoNoMundo(osso: THREE.Object3D, giro: THREE.Quaternion) {
+  const pai = (osso.parent as THREE.Object3D).getWorldQuaternion(new THREE.Quaternion())
+  osso.quaternion.premultiply(pai.clone().invert().multiply(giro).multiply(pai))
+  osso.updateWorldMatrix(false, true)
+}
+
+/** Vira o osso pro filho dele apontar pro alvo; com `peso` menor, vai só uma parte do caminho. */
+function apontarOsso(osso: THREE.Object3D, filho: THREE.Object3D, alvo: THREE.Vector3, peso: number) {
+  const base = osso.getWorldPosition(new THREE.Vector3())
+  const atual = filho.getWorldPosition(new THREE.Vector3()).sub(base).normalize()
+  const giro = new THREE.Quaternion().setFromUnitVectors(atual, alvo.clone().sub(base).normalize())
+  girarOssoNoMundo(osso, new THREE.Quaternion().slerp(giro, peso))
+}
+
+/** Leva a mão até `alvo` dobrando o cotovelo pra fora e pra baixo, como um braço de verdade. */
+function levarBracoAte(torre: THREE.Object3D, lado: 'Left' | 'Right', alvo: THREE.Vector3, peso: number) {
+  const ombro = ossoRPG(torre, `${lado}Arm`)
+  const cotovelo = ossoRPG(torre, `${lado}ForeArm`)
+  const mao = ossoRPG(torre, `${lado}Hand`)
+  if (!ombro || !cotovelo || !mao) return
+  const noOmbro = ombro.getWorldPosition(new THREE.Vector3())
+  const noCotovelo = cotovelo.getWorldPosition(new THREE.Vector3())
+  const braco = noOmbro.distanceTo(noCotovelo)
+  const antebraco = noCotovelo.distanceTo(mao.getWorldPosition(new THREE.Vector3()))
+  const rumo = alvo.clone().sub(noOmbro)
+  const distancia = Math.min(rumo.length(), (braco + antebraco) * 0.995)
+  rumo.normalize()
+  const aoLongo = (braco * braco - antebraco * antebraco + distancia * distancia) / (2 * distancia)
+  const pontaDoCotovelo = Math.sqrt(Math.max(0, braco * braco - aoLongo * aoLongo))
+  const dobra = new THREE.Vector3(lado === 'Right' ? -1 : 1, -0.8, -0.4).transformDirection(torre.matrixWorld)
+  dobra.addScaledVector(rumo, -dobra.dot(rumo)).normalize()
+  const destinoCotovelo = noOmbro.clone().addScaledVector(rumo, aoLongo).addScaledVector(dobra, pontaDoCotovelo)
+  apontarOsso(ombro, cotovelo, destinoCotovelo, peso)
+  apontarOsso(cotovelo, mao, noOmbro.clone().addScaledVector(rumo, distancia), peso)
+}
+
+/** O corpo por cima do clipe da peça: inclina o tronco e põe as duas mãos no cabo. */
+function posarComMarreta(torre: THREE.Object3D, pose: PoseMarreta, peso: number) {
+  torre.updateWorldMatrix(true, true)
+  const eixo = new THREE.Vector3(1, 0, 0).transformDirection(torre.matrixWorld)
+  const inclinacao = new THREE.Quaternion().setFromAxisAngle(eixo, (pose.tronco * peso) / 2)
+  for (const nome of ['Spine', 'Spine1']) {
+    const osso = ossoRPG(torre, nome)
+    if (osso) girarOssoNoMundo(osso, inclinacao)
+  }
+  const pegada = (s: number) =>
+    torre.localToWorld(new THREE.Vector3(0, pose.y + s * Math.cos(pose.angulo), pose.z + s * Math.sin(pose.angulo)))
+  levarBracoAte(torre, 'Left', pegada(PEGADA_MAO_ESQUERDA), peso)
+  levarBracoAte(torre, 'Right', pegada(PEGADA_MAO_DIREITA), peso)
+}
+
+/** Os ossos que o golpe mexe, com a posição de antes dele. O mixer só regrava um osso quando o valor
+ * do clipe muda: sem voltar pra essa posição a cada quadro, o giro de um quadro somava no do seguinte
+ * e o tronco ia dobrando até o chão. */
+const OSSOS_DO_GOLPE = ['Spine', 'Spine1', 'LeftArm', 'LeftForeArm', 'RightArm', 'RightForeArm']
+type OssoSalvo = [THREE.Object3D, THREE.Quaternion]
+
+function salvarOssosDoGolpe(torre: THREE.Object3D): OssoSalvo[] {
+  return OSSOS_DO_GOLPE.flatMap((nome): OssoSalvo[] => {
+    const osso = ossoRPG(torre, nome)
+    return osso ? [[osso, osso.quaternion.clone()]] : []
+  })
+}
+
+function restaurarOssos(ossos: OssoSalvo[]) {
+  for (const [osso, posicao] of ossos) osso.quaternion.copy(posicao)
+}
+
+interface Marretada {
+  torre: THREE.Object3D
+  marreta: THREE.Group
+  ossos: OssoSalvo[]
+  inicio: number
+  acertou: boolean
+  continua: () => boolean
+  aoAcertar: () => void
+}
+const marretadas = new Set<Marretada>()
+
+function encerrarMarretada(m: Marretada) {
+  restaurarOssos(m.ossos)
+  m.torre.remove(m.marreta)
+  marretadas.delete(m)
+}
+
+/** Roda a cada quadro, depois dos clipes: a pose precisa ser a última a mexer nos ossos. */
+function atualizarMarretadas(agora: number) {
+  for (const m of marretadas) {
+    if (!m.continua() || !m.torre.parent) {
+      encerrarMarretada(m)
+      continue
+    }
+    const decorrido = agora - m.inicio
+    const { pose, peso, escala } = poseDaMarreta(decorrido)
+    m.marreta.position.set(0, pose.y, pose.z)
+    m.marreta.rotation.x = pose.angulo
+    m.marreta.scale.setScalar(Math.max(0.001, escala))
+    restaurarOssos(m.ossos)
+    posarComMarreta(m.torre, pose, peso)
+    if (!m.acertou && decorrido >= MARRETA_PANCADA_MS) {
+      m.acertou = true
+      m.aoAcertar()
+    }
+    if (decorrido >= MARRETA_FIM_MS) encerrarMarretada(m)
+  }
+}
+
+/** Começa o golpe; `aoAcertar` roda no instante em que a marreta bate no chão. `continua` falso
+ * (outro jogo entrou no meio) tira a marreta da mão sem acertar. */
+function baterComMarreta(torre: THREE.Object3D, cor: 'w' | 'b', continua: () => boolean, aoAcertar: () => void) {
+  const marreta = criarMarreta(cor)
+  marreta.scale.setScalar(0.001)
+  torre.add(marreta)
+  marretadas.add({ torre, marreta, ossos: salvarOssosDoGolpe(torre), inicio: performance.now(), acertou: false, continua, aoAcertar })
+}
+
+/** Rachaduras saindo do centro, desenhadas uma vez só e reaproveitadas em todo golpe. */
+let texturaRachadura: THREE.CanvasTexture | null = null
+function obterTexturaRachadura(): THREE.CanvasTexture {
+  if (texturaRachadura) return texturaRachadura
+  const tamanho = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = tamanho
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D
+  const centro = tamanho / 2
+  const miolo = ctx.createRadialGradient(centro, centro, 2, centro, centro, 34)
+  miolo.addColorStop(0, 'rgba(15,9,4,0.95)')
+  miolo.addColorStop(1, 'rgba(15,9,4,0)')
+  ctx.fillStyle = miolo
+  ctx.fillRect(0, 0, tamanho, tamanho)
+  ctx.strokeStyle = 'rgba(18,10,5,0.92)'
+  ctx.lineCap = 'round'
+  for (let i = 0; i < 11; i++) {
+    let angulo = (i / 11) * Math.PI * 2 + Math.random() * 0.4
+    let x = centro
+    let y = centro
+    const comprimento = 70 + Math.random() * 45
+    ctx.lineWidth = 4
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    for (let passo = 0; passo < 6; passo++) {
+      angulo += (Math.random() - 0.5) * 0.7
+      x += (Math.cos(angulo) * comprimento) / 6
+      y += (Math.sin(angulo) * comprimento) / 6
+      ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  texturaRachadura = new THREE.CanvasTexture(canvas)
+  texturaRachadura.colorSpace = THREE.SRGBColorSpace
+  return texturaRachadura
+}
+
+const geoRachadura = new THREE.PlaneGeometry(1.5, 1.5)
+const RACHADURA_FICA_MS = 900
+const RACHADURA_SOME_MS = 900
+
+function rachaduraNoChao(cena: THREE.Object3D, x: number, z: number) {
+  const material = new THREE.MeshBasicMaterial({ map: obterTexturaRachadura(), transparent: true, depthWrite: false })
+  const rachadura = new THREE.Mesh(geoRachadura, material)
+  rachadura.rotation.x = -Math.PI / 2
+  rachadura.rotation.z = Math.random() * Math.PI * 2
+  rachadura.position.set(x, 0.022, z)
+  cena.add(rachadura)
+  const inicio = performance.now()
+  function passo(agora: number) {
+    const t = (agora - inicio - RACHADURA_FICA_MS) / RACHADURA_SOME_MS
+    material.opacity = 1 - Math.max(0, t)
+    if (t < 1) {
+      requestAnimationFrame(passo)
+      return
+    }
+    cena.remove(rachadura)
+    material.dispose()
+  }
+  requestAnimationFrame(passo)
+}
+
+function poeiraDaPancada(cena: THREE.Object3D, x: number, z: number) {
+  const agora = performance.now()
+  const particulas: Particula[] = []
+  const soltar = (cor: number, tamanho: number, vida: number, sobe: number, espalha: number) => {
+    const material = new THREE.SpriteMaterial({ map: texturaBrilho, color: cor, transparent: true, depthWrite: false })
+    const sprite = new THREE.Sprite(material)
+    sprite.scale.setScalar(tamanho)
+    sprite.position.set(x, 0.1, z)
+    cena.add(sprite)
+    const angulo = Math.random() * Math.PI * 2
+    const velocidade = new THREE.Vector3(Math.cos(angulo) * espalha, sobe, Math.sin(angulo) * espalha)
+    particulas.push({ objeto: sprite, nasceu: agora, vida, velocidade, tamanho })
+  }
+  // poeira baixa, que corre pelo chão, e lascas de madeira que saltam
+  for (let i = 0; i < 20; i++) soltar(0xc9b79c, 0.34 + Math.random() * 0.3, 650 + Math.random() * 450, 0.25 + Math.random() * 0.5, 0.9 + Math.random() * 1.3)
+  for (let i = 0; i < 14; i++) soltar(0x6b4423, 0.05 + Math.random() * 0.05, 550 + Math.random() * 300, 1.6 + Math.random() * 1.8, 0.5 + Math.random() * 1.2)
+  animarParticulas(cena, particulas)
+}
+
+const ONDA_MARRETA_MS = 480
+
+/** A onda da pancada corre pelo chão na cor do exército de quem bateu. */
+function ondaDaMarretada(cena: THREE.Object3D, x: number, z: number, cor: THREE.ColorRepresentation) {
+  const material = new THREE.MeshBasicMaterial({ color: cor, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })
+  const onda = new THREE.Mesh(geoOndaPoder, material)
+  onda.rotation.x = -Math.PI / 2
+  onda.position.set(x, 0.03, z)
+  cena.add(onda)
+  const inicio = performance.now()
+  function passo(agora: number) {
+    const t = Math.min(1, (agora - inicio) / ONDA_MARRETA_MS)
+    onda.scale.setScalar(1 + (1 - (1 - t) * (1 - t)) * 9)
+    material.opacity = 0.85 * (1 - t)
+    if (t < 1) {
+      requestAnimationFrame(passo)
+      return
+    }
+    cena.remove(onda)
+    material.dispose()
+  }
+  requestAnimationFrame(passo)
+}
+
+const TREMOR_MS = 340
+const FORCA_TREMOR = 0.07
+
+/** O tabuleiro treme com a pancada. Quem pediu menos movimento no sistema fica sem o tremor. */
+function tremerCena(cena: THREE.Object3D) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  const inicio = performance.now()
+  function passo(agora: number) {
+    const t = (agora - inicio) / TREMOR_MS
+    if (t >= 1) {
+      cena.position.set(0, 0, 0)
+      return
+    }
+    const forca = FORCA_TREMOR * (1 - t) * (1 - t)
+    cena.position.set((Math.random() - 0.5) * forca, (Math.random() - 0.5) * forca, (Math.random() - 0.5) * forca)
+    requestAnimationFrame(passo)
+  }
+  requestAnimationFrame(passo)
+}
+
+const ACHATAR_MS = 90
+const ACHATADA_MS = 380
+const ACHATADA_SOME_MS = 380
+
+/** A vítima da marreta: achata de uma vez, como num desenho animado, fica assim um instante e some. */
+function esmagarPeca(mesh: THREE.Object3D, aoTerminar: () => void) {
+  const definirOpacidade = prepararParaSumir(mesh)
+  novaSequenciaRPG(mesh)
+  mostrarEspadaRPG(mesh, false)
+  const base = mesh.scale.clone()
+  const inicio = performance.now()
+  function passo(agora: number) {
+    const decorrido = agora - inicio
+    const t = Math.min(1, decorrido / ACHATAR_MS)
+    mesh.scale.set(base.x * (1 + 0.5 * t), base.y * (1 - 0.88 * t), base.z * (1 + 0.5 * t))
+    const sumir = (decorrido - ACHATAR_MS - ACHATADA_MS) / ACHATADA_SOME_MS
+    if (sumir > 0) definirOpacidade(1 - Math.min(1, sumir))
+    if (sumir >= 1) {
+      aoTerminar()
+      return
+    }
+    requestAnimationFrame(passo)
+  }
+  requestAnimationFrame(passo)
+}
+
+// ---------------------------------------------------------------------------
 // Raio da dama — do cetro (mão direita) sai um raio que cintila em zigue-zague até a vítima,
 // redesenhado a cada poucos quadros, e explode nela. Ataque à distância como o do bispo, mas
 // instantâneo como um relâmpago.
@@ -2377,6 +2772,14 @@ function arremessarPeca(mesh: THREE.Object3D, direcao: { x: number; z: number },
   requestAnimationFrame(passo)
 }
 
+type PecaPromocao = 'q' | 'r' | 'b' | 'n'
+const PECAS_PROMOCAO: { peca: PecaPromocao; nome: string; branca: string; preta: string }[] = [
+  { peca: 'q', nome: 'Rainha', branca: '♕', preta: '♛' },
+  { peca: 'r', nome: 'Torre', branca: '♖', preta: '♜' },
+  { peca: 'b', nome: 'Bispo', branca: '♗', preta: '♝' },
+  { peca: 'n', nome: 'Cavalo', branca: '♘', preta: '♞' },
+]
+
 /** Desistir da partida — pede confirmação no próprio botão (funciona também na tela cheia do
  * navegador, onde as janelas de diálogo do site não aparecem). */
 function BotaoDesistir({
@@ -2446,6 +2849,28 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
   // true quando ainda não há partida em andamento e o jogador precisa escolher a cor antes de
   // começar (tanto na primeira vez quanto em "Novo jogo") — o admin logado já é o jogador fixo
   const [escolhendoCor, setEscolhendoCor] = useState(false)
+  const [somLigado, setSomLigado] = useEstadoPersistente('xadrez:somLigado', true)
+  const [ambienteLigado, setAmbienteLigado] = useEstadoPersistente('xadrez:ambienteLigado', true)
+  const [volumeSom, setVolumeSom] = useEstadoPersistente('xadrez:volumeSom', 0.6)
+  useEffect(() => {
+    configurarSom({ ligado: somLigado, ambiente: ambienteLigado, volume: volumeSom })
+  }, [somLigado, ambienteLigado, volumeSom])
+  // o navegador só libera som depois de um gesto: quem chegou clicando no menu já fez o seu
+  useEffect(() => {
+    if (navigator.userActivation?.hasBeenActive) destravarSom()
+    window.addEventListener('pointerdown', destravarSom)
+    window.addEventListener('keydown', destravarSom)
+    const desligarAmbiente = ambienteDoTabuleiro()
+    return () => {
+      window.removeEventListener('pointerdown', destravarSom)
+      window.removeEventListener('keydown', destravarSom)
+      desligarAmbiente()
+    }
+  }, [])
+  // cor do peão que está promovendo, enquanto a pessoa escolhe a peça
+  const [promocaoPendente, setPromocaoPendente] = useState<'w' | 'b' | null>(null)
+  const resolverPromocaoRef = useRef<((peca: PecaPromocao | null) => void) | null>(null)
+  useFecharComEsc(() => resolverPromocaoRef.current?.(null), promocaoPendente !== null)
   const [emDemo, setEmDemo] = useState(false)
   const [demoPausado, setDemoPausado] = useState(false)
   const [resultadoOverlay, setResultadoOverlay] = useState<'venceu' | 'perdeu' | 'desistiu' | null>(null)
@@ -2469,8 +2894,8 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
       livroRef.current = livro
       setLivroInfo(
         livro.size > 0
-          ? `Usando ${livro.size} posições do arquivo de referência (public/chess/games.pgn) pras jogadas da máquina.`
-          : 'Nenhum arquivo de referência encontrado ainda — a máquina está jogando só com busca própria. Coloque o PGN em public/chess/games.pgn.',
+          ? `Usando ${livro.size} posições das partidas de referência pras jogadas da máquina.`
+          : 'Partidas de referência indisponíveis agora — a máquina está jogando só com busca própria.',
       )
     })
   }, [])
@@ -2518,6 +2943,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
     // lances com animação ainda rodando (os testes esperam zerar)
     let lancesEmAndamento = 0
     function novoTabuleiro() {
+      resolverPromocaoRef.current?.(null)
       geracao++
       lancesEmAndamento = 0
     }
@@ -2534,6 +2960,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
     // câmera mais afastada e com FOV mais fechado que o normal — bem próxima e com campo de visão
     // largo deixava o tabuleiro com uma perspectiva exagerada, quase "olhando de raspão"
     const camera = new THREE.PerspectiveCamera(38, container.clientWidth / Math.max(container.clientHeight, 1), 0.1, 100)
+    ladoDaCamera = 1
     camera.position.set(0, 9.5, 10)
     camera.lookAt(0, 0, 0)
 
@@ -2723,6 +3150,8 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         xequeMesh.visible = false
         return
       }
+      // o mate tem o som dele; aqui é só xeque novo, não a mesma tela sendo redesenhada
+      if (!chess.isCheckmate() && (!xequeMesh.visible || xequeMesh.userData.casa !== rei.square)) tocarSom('xeque')
       const { x, z } = squareToPos(rei.square)
       xequeMesh.position.set(x, 0.006, z)
       xequeMesh.userData.casa = rei.square
@@ -2916,7 +3345,15 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           atraso += 60
         }
       }
-      setResultadoOverlay(corVencedora === corHumanoRef.current ? 'venceu' : 'perdeu')
+      const venceu = corVencedora === corHumanoRef.current
+      tocarSom(venceu ? 'vitoria' : 'derrota')
+      setResultadoOverlay(venceu ? 'venceu' : 'perdeu')
+    }
+
+    function tocarEmpateUmaVez() {
+      if (comemoracaoDisparada) return
+      comemoracaoDisparada = true
+      tocarSom('empate')
     }
 
     function atualizarStatusTexto() {
@@ -2944,8 +3381,10 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         dispararComemoracaoDeXequeMate(chess)
       } else if (chess.isStalemate()) {
         setStatusTexto('Empate por afogamento.')
+        tocarEmpateUmaVez()
       } else if (chess.isDraw()) {
         setStatusTexto('Empate.')
+        tocarEmpateUmaVez()
       } else if (chess.turn() !== corHumano) {
         setStatusTexto(chess.isCheck() ? 'Xeque! A máquina está pensando…' : 'A máquina está pensando…')
       } else {
@@ -3069,6 +3508,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
             return
           }
           // promoção: a ascensão — a luz envolve o peão, ele levita e vira a peça nova
+          tocarSom('promocao')
           animarAscensao(
             scene,
             meshMovendo,
@@ -3083,6 +3523,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         })
         const torre = torreDe ? pieceMeshBySquare.get(torreDe) : undefined
         if (torre && torreDe && torrePara) {
+          tocarSom('roque')
           pendentes++
           animarPosicao(torre, squareToPosPeca(torreDe), squareToPosPeca(torrePara), () => {
             chegou(torre, torreDe, torrePara)
@@ -3147,6 +3588,8 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
               umaParte()
             },
             () => {
+              tocarSom('golpe:n')
+              tocarSom('voo:vitima')
               animarImpacto(scene, posVitima.x, posVitima.z)
               arremessarPeca(vitima, { x: posVitima.x - de.x, z: posVitima.z - de.z }, () => {
                 removerVitima()
@@ -3182,6 +3625,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
               tocarClipeRPGUmaVez(atacante, 'Reverencia', { entrada: 0.3, saida: 0.4 })
               novaSequenciaRPG(vitima)
               mostrarEspadaRPG(vitima, false)
+              tocarSom('honra')
               animarPetalas(scene, vitima.position.clone(), 5200)
               virarRPG(vitima, rumoEntre(vitima.position, atacante.position), () =>
                 tocarClipeRPGUmaVez(vitima, 'Sacrificio', {
@@ -3220,6 +3664,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         // no instante em que o golpe acerta: a vítima cai (pra longe do atacante) e as aliadas
         // por perto comemoram
         const acertar = (direcaoGolpe: { x: number; z: number }) => {
+          tocarSom(`queda:${vitima.userData.tipo as string}`)
           animarImpacto(scene, posVitima.x, posVitima.z)
           const nocaute = estilo === 'derrubada' ? direcaoGolpe : undefined
           animarQuedaEDesaparecimento(
@@ -3234,18 +3679,53 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           comemorarAliadas()
         }
         const golpear = () => {
+          if (tipoAtacante === 'r' && ehRPG) {
+            pararRPG(atacante)
+            tocarSom('marreta:ergue')
+            baterComMarreta(
+              atacante,
+              corAtacante,
+              () => vigente() && sequenciaRPGValida(atacante, senha),
+              () => {
+                tocarSom('marreta:impacto')
+                tocarSom('esmagado', 0.05)
+                animarImpacto(scene, posVitima.x, posVitima.z)
+                ondaDaMarretada(scene, posVitima.x, posVitima.z, materiaisPorFaccao[corAtacante].detalhe.color)
+                rachaduraNoChao(scene, posVitima.x, posVitima.z)
+                poeiraDaPancada(scene, posVitima.x, posVitima.z)
+                tremerCena(scene)
+                esmagarPeca(vitima, () => {
+                  removerVitima()
+                  seguirParaDestino()
+                })
+                comemorarAliadas()
+              },
+            )
+            return
+          }
           const direcaoGolpe = { x: posVitima.x - atacante.position.x, z: posVitima.z - atacante.position.z }
           const alvo = vitima.position.clone().add(new THREE.Vector3(0, 0.45 * vitima.scale.y, 0))
           const corPoder = materiaisPorFaccao[corAtacante].brilho.color
           const acerto = () => acertar(direcaoGolpe)
           // o poder sai no instante do golpe; o acerto (a queda da vítima) só quando ele chega nela
-          const noGolpe = !aDistancia
-            ? acerto
-            : tipoAtacante === 'b'
-              ? () => lancarPoderDoBispo(scene, atacante, alvo, corPoder, acerto)
-              : tipoAtacante === 'q'
-                ? () => lancarRaioDaDama(scene, atacante, alvo, corPoder, acerto)
-                : () => lancarOndaDoRei(scene, atacante, alvo, materialCoroa.color, acerto)
+          const noGolpe = () => {
+            if (!aDistancia) {
+              tocarSom(`golpe:${tipoAtacante}`)
+              acerto()
+            } else if (tipoAtacante === 'b') {
+              tocarSom('magia:b')
+              lancarPoderDoBispo(scene, atacante, alvo, corPoder, () => {
+                tocarSom('explosao:b')
+                acerto()
+              })
+            } else if (tipoAtacante === 'q') {
+              tocarSom('raio:q')
+              lancarRaioDaDama(scene, atacante, alvo, corPoder, acerto)
+            } else {
+              tocarSom('onda:k')
+              lancarOndaDoRei(scene, atacante, alvo, materialCoroa.color, acerto)
+            }
+          }
           tocarGolpeRPG(atacante)
           animarAtaqueEspada(atacante, direcaoGolpe, estilo, noGolpe, () => {
             if (sequenciaRPGValida(atacante, senha)) guardarEspadaRPG(atacante, senha)
@@ -3253,6 +3733,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         }
         // o peão RPG desembainha a espada primeiro (e vai até a vítima com ela na mão), golpeia e
         // guarda de volta — a espada entra na bainha antes de a vítima terminar de sumir
+        if (atacante.userData.espadaRPG) tocarSom('espada:saca')
         sacarEspadaRPG(atacante, senha, () => {
           if (!ehRPG) {
             golpear()
@@ -3319,7 +3800,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           vezDaMaquinaRef.current = false
           atualizarStatusTexto()
         })
-      }, PAUSA_MAQUINA_MS)
+      }, buscarNoLivro(chess, livroRef.current) ? PAUSA_MAQUINA_LIVRO_MS : PAUSA_MAQUINA_MS)
     }
 
     // ---------------------------------------------------------------------
@@ -3420,6 +3901,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           const dx = camera.position.x - mesh.position.x
           const dz = camera.position.z - mesh.position.z
           const dist = Math.hypot(dx, dz) || 1
+          tocarSom('recusa')
           animarRecusa(mesh, { x: dx / dist, z: dz / dist })
         }
         return
@@ -3436,6 +3918,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
       destinosRef.current = destinos
       destacarSelecao(square, destinos)
 
+      tocarSom(`selecionar:${peca.type}`)
       // peças aliadas por perto reagem (gesto sorteado) na direção da peça que acabou de ser
       // selecionada, cada uma com um pequeno atraso pra não ficarem todas sincronizadas
       const posSel = squareToPos(square)
@@ -3460,10 +3943,23 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
       selecionadaRef.current = null
       destinosRef.current = []
       limparDestaques()
-      executarLanceComAnimacao({ from: origem, to: destino, promotion: 'q' }, () => {
-        atualizarStatusTexto()
-        if (!chess.isGameOver()) jogarLanceDaMaquina()
-      })
+      const jogar = (promotion?: PecaPromocao) =>
+        executarLanceComAnimacao({ from: origem, to: destino, promotion }, () => {
+          atualizarStatusTexto()
+          if (!chess.isGameOver()) jogarLanceDaMaquina()
+        })
+      if (!chess.moves({ square: origem, verbose: true }).some((m) => m.to === destino && m.promotion)) {
+        jogar()
+        return
+      }
+      // o peão chegou ao outro lado: o lance só sai depois de escolher a peça. Cancelando, ele fica
+      // onde está e a vez continua de quem ia jogar
+      resolverPromocaoRef.current = (peca) => {
+        resolverPromocaoRef.current = null
+        setPromocaoPendente(null)
+        if (peca) jogar(peca)
+      }
+      setPromocaoPendente(chess.turn())
     }
 
     function onClick(event: MouseEvent) {
@@ -3498,6 +3994,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         setResultadoOverlay(null)
         const chess = chessRef.current
         corHumanoRef.current = corHumano
+        virarCameraPara(corHumano === 'w' ? 1 : -1)
         if (pgn) {
           try {
             chess.loadPgn(pgn)
@@ -3506,6 +4003,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           }
         } else {
           chess.reset()
+          tocarSom('inicio')
         }
         selecionadaRef.current = null
         destinosRef.current = []
@@ -3523,6 +4021,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         partidaDemo = null
         demoPausadaRef.current = false
         setEmDemo(true)
+        virarCameraPara(1)
         setDemoPausado(false)
         chessRef.current.reset()
         selecionadaRef.current = null
@@ -3570,6 +4069,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
             }
           }
         }
+        tocarSom('derrota')
         setResultadoOverlay('desistiu')
         atualizarStatusTexto()
       },
@@ -3599,6 +4099,52 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
       if (montado) sincronizarPecas()
     })
 
+    /** As coordenadas do lado de quem está olhando, e de pé pra essa pessoa. */
+    function virarCoordenadas(lado: 1 | -1) {
+      labelsGroup.children.forEach((rotulo, i) => {
+        if (i < 8) rotulo.position.z = 4.35 * lado
+        else rotulo.position.x = -4.35 * lado
+        rotulo.rotation.z = lado === 1 ? 0 : Math.PI
+      })
+    }
+
+    // meia-volta da câmera em torno do tabuleiro: o de quem joga fica sempre perto da tela
+    let giroCamera: { de: number; giro: number; inicio: number; coordenadasViradas: boolean } | null = null
+
+    /** Põe a câmera do lado da cor da pessoa, mantendo a inclinação e o zoom que ela tiver escolhido. */
+    function virarCameraPara(lado: 1 | -1) {
+      ladoDaCamera = lado
+      const atual = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z)
+      const giro = diferencaAngular(atual, lado === 1 ? 0 : Math.PI)
+      if (Math.abs(giro) < 0.001) {
+        virarCoordenadas(lado)
+        return
+      }
+      tocarSom('giro')
+      giroCamera = { de: atual, giro, inicio: performance.now(), coordenadasViradas: false }
+      controls.enabled = false
+      // quem pediu menos movimento no sistema vai direto pro fim
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) giroCamera.inicio -= GIRO_CAMERA_MS
+    }
+
+    function atualizarGiroCamera(agora: number) {
+      if (!giroCamera) return
+      const t = Math.min(1, (agora - giroCamera.inicio) / GIRO_CAMERA_MS)
+      const angulo = giroCamera.de + giroCamera.giro * (t * t * (3 - 2 * t))
+      const raio = Math.hypot(camera.position.x - controls.target.x, camera.position.z - controls.target.z)
+      camera.position.x = controls.target.x + Math.sin(angulo) * raio
+      camera.position.z = controls.target.z + Math.cos(angulo) * raio
+      // na metade do giro o tabuleiro está de lado: é quando a troca das coordenadas menos aparece
+      if (t >= 0.5 && !giroCamera.coordenadasViradas) {
+        giroCamera.coordenadasViradas = true
+        virarCoordenadas(ladoDaCamera)
+      }
+      if (t >= 1) {
+        giroCamera = null
+        controls.enabled = true
+      }
+    }
+
     const relogio = new THREE.Clock()
     let frameId = 0
     function animate() {
@@ -3609,6 +4155,8 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         ;(peca.userData.mixer as THREE.AnimationMixer | undefined)?.update(delta)
         atualizarGestoRPG(peca, agora)
       }
+      atualizarMarretadas(agora)
+      atualizarGiroCamera(agora)
       if (xequeMesh.visible) xequeMat.opacity = 0.45 + 0.25 * ((Math.sin(agora / 260) + 1) / 2)
       controls.update()
       renderer.render(scene, camera)
@@ -3670,6 +4218,21 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
         distanciaCamera: () => camera.position.distanceTo(controls.target),
         /** Lance ou máquina ainda em andamento. */
         ocupado: () => vezDaMaquinaRef.current || lancesEmAndamento > 0,
+        /** Lado da câmera (z positivo = brancas perto da tela) e se ela ainda está girando. */
+        camera: () => ({ z: camera.position.z, girando: giroCamera !== null, coordenadaA: labelsGroup.children[0].position.z }),
+        /** Onde a casa aparece no tabuleiro, em pixels da janela. */
+        casaNaTela: (casa: string) => {
+          const { x, z } = squareToPos(casa)
+          const p = new THREE.Vector3(x, 0, z).project(camera)
+          const r = renderer.domElement.getBoundingClientRect()
+          return { x: r.left + ((p.x + 1) / 2) * r.width, y: r.top + ((1 - p.y) / 2) * r.height }
+        },
+        /** O navegador já liberou o som, e o som ambiente está tocando? */
+        estadoDoSom: () => ({ destravado: somDestravado(), ambiente: ambienteTocando() }),
+        /** Golpes de marreta em andamento. */
+        marretadas: () => marretadas.size,
+        /** A vez já é da máquina: da peça da pessoa parar até o fim do lance dela. */
+        vezDaMaquina: () => vezDaMaquinaRef.current,
         /** Cada peça do motor tem a sua peça 3D, do tipo/cor certos, na cena e no centro da casa — e nada sobrando. */
         problemasDoTabuleiro: () => {
           const problemas: string[] = []
@@ -3853,7 +4416,29 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
             </p>
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="group" aria-label="Som do jogo" className="inline-flex flex-wrap items-center gap-2">
+            <Button variant="ghost" aria-pressed={somLigado} onClick={() => setSomLigado((v) => !v)}>
+              {somLigado ? '🔊 Som' : '🔇 Som desligado'}
+            </Button>
+            {somLigado && (
+              <>
+                <input
+                  type="range"
+                  aria-label="Volume do som"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={volumeSom}
+                  onChange={(e) => setVolumeSom(Number(e.target.value))}
+                  className="w-20 accent-ink-700"
+                />
+                <Button variant="ghost" aria-pressed={ambienteLigado} onClick={() => setAmbienteLigado((v) => !v)}>
+                  {ambienteLigado ? '🎵 Ambiente' : 'Ambiente desligado'}
+                </Button>
+              </>
+            )}
+          </div>
           {emDemo && (
             <Button
               variant="ghost"
@@ -3936,13 +4521,24 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col gap-2 p-3" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
             <div className="pointer-events-auto flex items-start justify-between gap-2">
               <p className="min-w-0 rounded-lg bg-white/85 px-3 py-1.5 text-sm font-medium text-[#3a2a1a] shadow backdrop-blur">{statusTexto}</p>
-              <button
-                type="button"
-                onClick={sairDaTelaCheia}
-                className="shrink-0 rounded-lg bg-white/90 px-3 py-1.5 text-sm font-semibold text-[#3a2a1a] shadow backdrop-blur"
-              >
-                ✕ Tela normal
-              </button>
+              <span className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  aria-pressed={somLigado}
+                  aria-label={somLigado ? 'Desligar o som' : 'Ligar o som'}
+                  onClick={() => setSomLigado((v) => !v)}
+                  className="rounded-lg bg-white/90 px-3 py-1.5 text-sm font-semibold text-[#3a2a1a] shadow backdrop-blur"
+                >
+                  {somLigado ? '🔊' : '🔇'}
+                </button>
+                <button
+                  type="button"
+                  onClick={sairDaTelaCheia}
+                  className="rounded-lg bg-white/90 px-3 py-1.5 text-sm font-semibold text-[#3a2a1a] shadow backdrop-blur"
+                >
+                  ✕ Tela normal
+                </button>
+              </span>
             </div>
             <div className="pointer-events-auto flex flex-wrap items-center gap-2">
               {podeDesistir && <BotaoDesistir confirmando={confirmandoDesistencia} onPedir={setConfirmandoDesistencia} onConfirmar={handleDesistir} sobreTabuleiro />}
@@ -3960,9 +4556,45 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
           </div>
         )}
 
+        {promocaoPendente && (
+          <div
+            role="dialog"
+            aria-label="Escolher a peça da promoção"
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-xl p-4"
+          >
+            <div className="w-full max-w-sm rounded-xl bg-surface p-4 shadow-xl text-center">
+              <h3 className="font-display text-base font-semibold text-ink-900 mb-1">Seu peão chegou ao outro lado!</h3>
+              <p className="text-xs text-ink-400 mb-4">Escolha em qual peça ele vai se transformar.</p>
+              <div className="grid grid-cols-4 gap-2">
+                {PECAS_PROMOCAO.map(({ peca, nome, branca, preta }, i) => (
+                  <button
+                    key={peca}
+                    type="button"
+                    autoFocus={i === 0}
+                    onClick={() => resolverPromocaoRef.current?.(peca)}
+                    className="flex flex-col items-center gap-1 rounded-xl border border-ink-200 py-3 transition hover:border-ink-400 hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+                  >
+                    <span aria-hidden className="text-3xl leading-none text-ink-900">
+                      {promocaoPendente === 'w' ? branca : preta}
+                    </span>
+                    <span className="text-xs font-medium text-ink-800">{nome}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => resolverPromocaoRef.current?.(null)}
+                className="mt-4 text-xs text-ink-400 underline hover:text-ink-600"
+              >
+                Voltar e jogar outro lance
+              </button>
+            </div>
+          </div>
+        )}
+
         {escolhendoCor && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-ink-950/70 backdrop-blur-sm rounded-xl p-4">
-            <div className="w-full max-w-xs rounded-xl bg-white p-4 shadow-xl text-center">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-xl p-4">
+            <div className="w-full max-w-xs rounded-xl bg-surface p-4 shadow-xl text-center">
               <h3 className="font-display text-base font-semibold text-ink-900 mb-1">Com qual peça você quer jogar?</h3>
               <p className="text-xs text-ink-400 mb-4">Escolha antes de começar essa partida.</p>
               <div className="flex gap-3 justify-center">
@@ -3971,7 +4603,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
                   onClick={() => handleEscolherCor('w')}
                   className="flex flex-col items-center gap-2 rounded-xl border border-ink-200 hover:border-ink-400 hover:bg-ink-50 transition px-5 py-4"
                 >
-                  <span className="h-10 w-10 rounded-full bg-white border-2 border-ink-300 shadow-inner" />
+                  <span className="h-10 w-10 rounded-full border-2 border-[#b9b2a6] bg-[#f7f4ee] shadow-inner" />
                   <span className="text-sm font-medium text-ink-800">Brancas</span>
                 </button>
                 <button
@@ -3979,7 +4611,7 @@ export function ChessBoard3D({ jogador }: { jogador: string }) {
                   onClick={() => handleEscolherCor('b')}
                   className="flex flex-col items-center gap-2 rounded-xl border border-ink-200 hover:border-ink-400 hover:bg-ink-50 transition px-5 py-4"
                 >
-                  <span className="h-10 w-10 rounded-full bg-ink-900 border-2 border-ink-900 shadow-inner" />
+                  <span className="h-10 w-10 rounded-full border-2 border-[#6b6358] bg-[#14110e] shadow-inner" />
                   <span className="text-sm font-medium text-ink-800">Pretas</span>
                 </button>
               </div>

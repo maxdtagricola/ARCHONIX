@@ -1,12 +1,15 @@
-Coloque aqui o arquivo de partidas de referência com o nome exato:
+Partidas de referência do xadrez
 
-  games.pgn
+  games.pgn    1000 partidas em PGN padrão, geradas com o Stockfish
+               (scripts/gerar-partidas-xadrez.mjs).
+  livro.json   O que o site usa de verdade: os lances bons dos primeiros 20 lances
+               de cada partida, por posição, prontos pra carregar rápido.
 
-Formato esperado: PGN padrão, podendo conter várias partidas seguidas (cada
-uma começando com as tags [Event "..."], [White "..."], etc.), como um
-arquivo exportado do lichess.org, chess.com ou de uma base como a PGN Mentor.
+Lance marcado com "?!" no games.pgn é um lance fraco, de propósito: mostra o que
+um jogador comum faria. A máquina aprende a responder a ele, mas nunca a repeti-lo.
 
-Assim que o arquivo "public/chess/games.pgn" existir, o tabuleiro na Tela
-Inicial passa a usar essas partidas como referência pras jogadas da máquina
-automaticamente — não precisa mexer em nenhum código. Sem o arquivo, a
-máquina joga só com uma busca própria (mais fraca).
+Trocou ou acrescentou partidas no games.pgn? Compile de novo:
+
+  node scripts/compilar-livro-xadrez.mjs
+
+Sem o livro.json, a máquina joga só com a busca própria (mais lenta e mais fraca).
