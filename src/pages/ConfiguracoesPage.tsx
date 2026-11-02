@@ -12,7 +12,6 @@ import {
   type PlanilhaImportada,
 } from '../db/configRepo'
 import { deleteEmpresa, listEmpresas, saveEmpresa } from '../db/empresasRepo'
-import { excluirPastaDoJogador, listPartidasXadrez } from '../db/xadrezRepo'
 import { definirTabelasCustomizadas } from '../calc/calculator'
 import { lerPlanilhaMarkup, type ResultadoImportacao } from '../xlsxImport'
 import { baixarWorkbookMarkup } from '../planilhaMarkupDownload'
@@ -68,7 +67,6 @@ const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNod
   { id: 'planilhas', titulo: 'Planilhas importadas', resumo: 'Histórico, baixar ou voltar a usar uma anterior', icone: ICONES_CONFIG.planilhas },
   { id: 'feriados', titulo: 'Feriados', resumo: 'Estaduais e municipais, pros dias úteis', icone: ICONES_CONFIG.feriados },
   { id: 'fundo', titulo: 'Vídeo de fundo', resumo: 'Animar ou pausar o samurai ao fundo', icone: ICONES_CONFIG.fundo },
-  { id: 'xadrez', titulo: 'Xadrez', resumo: 'Pastas de partidas de cada jogador', icone: ICONES_CONFIG.xadrez },
 ]
 
 export function ConfiguracoesPage({
@@ -223,44 +221,6 @@ export function ConfiguracoesPage({
       await refreshEmpresas()
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao excluir a empresa no servidor.')
-    }
-  }
-
-  // --- xadrez (Tela Inicial) — pastas por jogador, exclusão só aqui com senha --
-  const [pastasXadrez, setPastasXadrez] = useState<{ jogador: string; partidas: number }[]>([])
-  const [carregandoXadrez, setCarregandoXadrez] = useState(true)
-  const [pastaXadrezParaExcluir, setPastaXadrezParaExcluir] = useState<string | null>(null)
-  const [senhaExcluirPastaXadrez, setSenhaExcluirPastaXadrez] = useState('')
-
-  async function refreshPastasXadrez() {
-    setCarregandoXadrez(true)
-    try {
-      const partidas = await listPartidasXadrez()
-      const porJogador = new Map<string, number>()
-      for (const p of partidas) porJogador.set(p.jogador, (porJogador.get(p.jogador) ?? 0) + 1)
-      setPastasXadrez(Array.from(porJogador.entries()).map(([jogador, total]) => ({ jogador, partidas: total })))
-    } catch {
-      // xadrez é só um extra — se o servidor falhar, a lista simplesmente fica vazia
-    } finally {
-      setCarregandoXadrez(false)
-    }
-  }
-
-  useEffect(() => {
-    refreshPastasXadrez()
-  }, [])
-
-  async function handleConfirmarExcluirPastaXadrez() {
-    if (!pastaXadrezParaExcluir) return
-    try {
-      // confere antes: são várias exclusões, e a senha errada não deve deixar a pasta pela metade
-      await verificarSenhaAdmin(senhaExcluirPastaXadrez)
-      await excluirPastaDoJogador(pastaXadrezParaExcluir, senhaExcluirPastaXadrez)
-      setPastaXadrezParaExcluir(null)
-      setSenhaExcluirPastaXadrez('')
-      await refreshPastasXadrez()
-    } catch (err) {
-      void avisar(err instanceof Error ? err.message : 'Erro ao excluir as partidas no servidor.')
     }
   }
 
@@ -575,68 +535,6 @@ export function ConfiguracoesPage({
               </div>
             )}
           </div>
-        )
-      case 'xadrez':
-        return (
-          <>
-            <p className="text-xs text-ink-400 mb-4">
-              Cada nome registrado na Tela Inicial guarda as partidas de xadrez dele separadas dos outros. Excluir uma
-              pasta apaga todas as partidas salvas daquele jogador — essa ação só existe aqui e pede senha.
-            </p>
-
-            {carregandoXadrez ? (
-              <p className="text-sm text-ink-400 text-center py-6">Carregando…</p>
-            ) : pastasXadrez.length === 0 ? (
-              <p className="text-sm text-ink-400 text-center py-6">Nenhum jogador registrado ainda.</p>
-            ) : (
-              <div className="divide-y divide-ink-100 border-t border-ink-100">
-                {pastasXadrez.map((p) => (
-                  <div key={p.jogador} className="flex items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-ink-900 truncate">{p.jogador}</p>
-                      <p className="text-xs text-ink-400">
-                        {p.partidas} partida{p.partidas === 1 ? '' : 's'} salva{p.partidas === 1 ? '' : 's'}
-                      </p>
-                    </div>
-                    <Button variant="ghost" onClick={() => setPastaXadrezParaExcluir(p.jogador)}>
-                      Excluir pasta
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {pastaXadrezParaExcluir && (
-              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4">
-                <p className="text-sm text-ink-900 mb-3">
-                  Confirme a senha pra excluir todas as partidas de "{pastaXadrezParaExcluir}". Essa ação não pode ser
-                  desfeita.
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="password"
-                    className="field-input max-w-[10rem]"
-                    placeholder="Senha"
-                    aria-label="Senha"
-                    value={senhaExcluirPastaXadrez}
-                    onChange={(e) => setSenhaExcluirPastaXadrez(e.target.value)}
-                  />
-                  <Button variant="primary" onClick={handleConfirmarExcluirPastaXadrez}>
-                    Confirmar exclusão
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setPastaXadrezParaExcluir(null)
-                      setSenhaExcluirPastaXadrez('')
-                    }}
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-              </div>
-            )}
-          </>
         )
       case 'importarMarkup':
         return (

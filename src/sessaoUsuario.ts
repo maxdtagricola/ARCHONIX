@@ -14,9 +14,9 @@ export interface UsuarioLogado {
   login: string
   /** Como o usuário digita/vê o próprio nome de login (ex.: "MÁXIMUS"). */
   exibicao: string
-  /** Como o app conhece o usuário — cotações, histórico, partidas de xadrez (ex.: "Max"). */
+  /** Como o app conhece o usuário — cotações, histórico (ex.: "Max"). */
   nome: string
-  /** 'admin' vê o site todo; 'xadrez' só a Tela Inicial. */
+  /** 'admin' vê o site todo; 'xadrez' é o nome antigo de quem está sem função: só vê a própria conta. */
   papel: PapelUsuario
   /** Gerencia os usuários (o Max). */
   gestor: boolean

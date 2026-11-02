@@ -6,7 +6,6 @@ import { useFecharComEsc } from '../teclaEsc'
 
 export type TabKey =
   | 'telaInicial'
-  | 'xadrez'
   | 'cotacoes'
   | 'analytics'
   | 'relatorios'
@@ -76,10 +75,6 @@ export const GRUPOS_DE_ABAS: NavGroup[] = [
     label: 'Sistema',
     items: [{ key: 'configuracoes', label: 'Configurações' }],
   },
-  {
-    label: 'Lazer',
-    items: [{ key: 'xadrez', label: 'Xadrez' }],
-  },
 ]
 
 /** true em tela de computador/tablet (sm em diante) — no celular o menu é a gaveta que abre por cima
@@ -117,7 +112,7 @@ export function Layout({
   onSair: () => void
   podeVoltar: boolean
   onVoltar: () => void
-  /** Vídeo de fundo atrás do conteúdo (todas as abas, menos o Xadrez) — sem isso, fundo liso. Pausar fica em Configurações. */
+  /** Vídeo de fundo atrás do conteúdo — sem isso, fundo liso. Pausar fica em Configurações. */
   fundo?: { pausado: boolean; forte: boolean }
   children: ReactNode
 }) {

@@ -51,7 +51,6 @@ import type {
 // Cada aba (menos a Tela Inicial e a Precificação, as mais usadas) só é baixada quando é aberta pela
 // primeira vez — com elas vão as bibliotecas pesadas de planilha e PDF, que deixam de atrasar a
 // abertura do site (o pacote inicial tinha 2,7 MB)
-const XadrezPage = lazy(() => import('./pages/XadrezPage').then((m) => ({ default: m.XadrezPage })))
 const CotacoesPage = lazy(() => import('./pages/CotacoesPage').then((m) => ({ default: m.CotacoesPage })))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })))
 const ConfiguracoesPage = lazy(() => import('./pages/ConfiguracoesPage').then((m) => ({ default: m.ConfiguracoesPage })))
@@ -103,7 +102,7 @@ export default function App() {
   return (
     <>
       {sessao.usuario.papel !== 'admin' ? (
-        <AreaDoJogador usuario={sessao.usuario} />
+        <AreaSemFuncao usuario={sessao.usuario} />
       ) : (
         // key: outro usuário entrando começa do zero (abas, cotação aberta...)
         <AppAdmin key={sessao.usuario.login} usuario={sessao.usuario} />
@@ -114,8 +113,8 @@ export default function App() {
   )
 }
 
-/** Quem só tem acesso ao xadrez: a Tela Inicial, sem a barra de abas. */
-function AreaDoJogador({ usuario }: { usuario: UsuarioLogado }) {
+/** Quem ainda não tem função definida: só a própria conta, sem a barra de abas. */
+function AreaSemFuncao({ usuario }: { usuario: UsuarioLogado }) {
   const [mostrarMinhaConta, setMostrarMinhaConta] = useState(false)
   return (
     <div className="min-h-screen bg-ink-50">
@@ -133,14 +132,7 @@ function AreaDoJogador({ usuario }: { usuario: UsuarioLogado }) {
         </div>
       </header>
       <main className="max-w-3xl mx-auto px-4 py-6">
-        {usuario.pendente && (
-          <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Seu cadastro está com o administrador, que vai definir sua função no site. Por enquanto, seu acesso é ao xadrez.
-          </p>
-        )}
-        <Suspense fallback={<CarregandoAba />}>
-          <XadrezPage jogador={usuario.nome} />
-        </Suspense>
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Seu cadastro está com o administrador, que vai definir sua função no site.</p>
       </main>
       {mostrarMinhaConta && <MinhaContaModal usuario={usuario} onFechar={() => setMostrarMinhaConta(false)} />}
       <DialogHost />
@@ -162,7 +154,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
   useEffect(() => {
     if (!podeVer(tab)) setTab('telaInicial')
   }, [podeVer, tab])
-  // vídeo de fundo (todas as abas, menos o Xadrez): pausado ou não é preferência deste aparelho
+  // vídeo de fundo: pausado ou não é preferência deste aparelho
   const [fundoPausado, setFundoPausado] = useEstadoPersistente('telaInicial:fundoPausado', false)
   const alternarFundo = () => setFundoPausado((v) => !v)
   // atalhos "Nova cotação" / "Importar cotação" da Tela Inicial: a aba Cotações já abre no modo certo
@@ -866,7 +858,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
       onSair={() => void sair()}
       podeVoltar={tabHistory.length > 0}
       onVoltar={handleVoltar}
-      fundo={tab === 'xadrez' ? undefined : { pausado: fundoPausado, forte: tab !== 'telaInicial' }}
+      fundo={{ pausado: fundoPausado, forte: tab !== 'telaInicial' }}
     >
       {tab === 'telaInicial' && (
         <TelaInicialPage
@@ -891,7 +883,6 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
       )}
       {/* as outras abas vêm sob demanda (ver os lazy() lá em cima) */}
       <Suspense fallback={<CarregandoAba />}>
-      {tab === 'xadrez' && <XadrezPage jogador={currentAdmin} />}
       {tab === 'cotacoes' && (
         <CotacoesPage
           refreshKey={historyRefreshKey}

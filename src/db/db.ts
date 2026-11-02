@@ -136,7 +136,7 @@ function trocarSenhaGuardadaPelaChave(): Promise<void> {
 
 // sem isso, um fetch pra um servidor inalcançável (celular desligado, Tailscale fora do ar) fica
 // pendurado por dezenas de segundos (ou mais) até o próprio SO desistir da conexão — trava telas
-// inteiras (ex: "a máquina está pensando…" no xadrez) por tempo nenhum motivo. 6s é bastante tempo
+// inteiras por tempo nenhum motivo. 6s é bastante tempo
 // pra uma resposta normal do servidor, mas curto o suficiente pra sentir rápido quando ele está fora.
 const TIMEOUT_REQUISICAO_MS = 6000
 

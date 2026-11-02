@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { SamuraiNoFundo } from './SamuraiNoFundo'
 
-// Vídeo de fundo (todas as abas menos o Xadrez), cobrindo a tela toda atrás do conteúdo, sem som. O
+// Vídeo de fundo de todas as abas, cobrindo a tela toda atrás do conteúdo, sem som. O
 // original é 640×360 a 30 quadros, e bem comprimido; as versões em public/fundo foram feitas fora do
 // site, por IA: cada quadro ampliado 4× pelo Real-ESRGAN (modelo x4plus-anime — entre os testados, o
 // que deixou os contornos mais limpos e o céu liso, sem tremer de um quadro pro outro), os quadros do

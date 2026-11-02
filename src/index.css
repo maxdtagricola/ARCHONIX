@@ -170,7 +170,7 @@
   .sem-barra-rolagem::-webkit-scrollbar {
     display: none;
   }
-  /* Com o vídeo de fundo (todas as abas, menos o Xadrez): os quadros ficam um pouco translúcidos e
+  /* Com o vídeo de fundo: os quadros ficam um pouco translúcidos e
    * desfocam o que está atrás — o fundo aparece sem atrapalhar a leitura (os quadros coloridos de
    * aviso mantêm a cor deles) */
   .com-fundo-video .card {

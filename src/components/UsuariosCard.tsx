@@ -119,7 +119,7 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
   }
 
   async function handleExcluir(u: UsuarioCadastrado) {
-    const ok = await confirmar(`Excluir o usuário ${u.exibicao}? As partidas de xadrez dele continuam salvas.`, {
+    const ok = await confirmar(`Excluir o usuário ${u.exibicao}?`, {
       confirmText: 'Excluir',
       tone: 'danger',
     })
@@ -267,7 +267,7 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                           onClick={() => void handlePapel(u, u.papel)}
                           className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50"
                         >
-                          Manter só xadrez
+                          Manter sem função
                         </button>
                       )}
                       {u.temSenha && (

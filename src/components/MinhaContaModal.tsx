@@ -6,7 +6,7 @@ import { useFecharComEsc } from '../teclaEsc'
 import type { UsuarioLogado } from '../sessaoUsuario'
 
 /** Troca a própria senha e/ou o e-mail de recuperação — sempre pedindo a senha atual. Fica em
- * Configurações > Minha conta (e numa janela pra quem só tem o xadrez, que não vê Configurações). */
+ * Configurações > Minha conta (e numa janela pra quem ainda não tem função, que não vê Configurações). */
 export function MinhaContaForm({
   usuario,
   onSalvo,
@@ -140,7 +140,7 @@ export function MinhaContaForm({
   )
 }
 
-/** A mesma coisa numa janela — pra quem só tem o xadrez (sem a aba Configurações). */
+/** A mesma coisa numa janela — pra quem ainda não tem função (sem a aba Configurações). */
 export function MinhaContaModal({ usuario, onFechar }: { usuario: UsuarioLogado; onFechar: () => void }) {
   useFecharComEsc(onFechar)
   return (

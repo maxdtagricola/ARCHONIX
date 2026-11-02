@@ -10,7 +10,7 @@ import { PERMISSOES_PADRAO, getTiposUsuario, salvarTiposUsuario, type Permissoes
 import type { PapelUsuario } from '../sessaoUsuario'
 
 export const ROTULO_PAPEL: Record<PapelUsuario, string> = {
-  xadrez: 'Só xadrez (Tela Inicial)',
+  xadrez: 'Sem função definida',
   admin: 'Administrador (site completo)',
 }
 
@@ -142,7 +142,7 @@ export function TiposUsuarioCard() {
           {editando.papel === 'admin' ? (
             <EditorPermissoes valor={editando} onChange={(p) => setEditando({ ...editando, ...p })} />
           ) : (
-            <p className="text-xs text-ink-400">Quem é só do xadrez vê só a Tela Inicial com o xadrez — não há abas nem status a escolher.</p>
+            <p className="text-xs text-ink-400">Sem função, a pessoa só vê a própria conta — não há abas nem status a escolher.</p>
           )}
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={() => void handleSalvar()} disabled={salvando}>

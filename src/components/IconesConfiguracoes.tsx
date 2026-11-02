@@ -111,15 +111,6 @@ export const ICONES_CONFIG = {
       <path d="M7.5 8h3M7.5 11.5h3M7.5 15h3M17 13.5h0M17 16.5h0" />
     </Icone>
   ),
-  // peão do xadrez
-  xadrez: (
-    <Icone>
-      <circle cx="12" cy="6" r="2.5" />
-      <path d="M9.5 10.5h5" />
-      <path d="M10.3 10.5 9.2 17h5.6l-1.1-6.5" />
-      <path d="M7.5 17h9l1 3.5h-11z" />
-    </Icone>
-  ),
   // planilha com a seta de subir
   importarMarkup: (
     <Icone>
