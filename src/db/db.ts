@@ -33,7 +33,7 @@ export const STORE_ANALISES = 'analises'
 // console do navegador (F12) e rode:
 //   localStorage.setItem('serverUrl', 'http://NOVO_IP:3000')
 // e recarregue a página (localStorage.removeItem('serverUrl') volta ao padrão).
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:3000'
+const DEFAULT_SERVER_URL = 'https://rondocat-pc35.tail2f1678.ts.net'
 
 export function getServerUrl(): string {
   return localStorage.getItem('serverUrl') || DEFAULT_SERVER_URL
