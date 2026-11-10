@@ -9,17 +9,32 @@ import { corPadraoDoStatus, corTexto } from '../statusColors'
 import { formatCurrency, formatDate, makeId } from '../utils'
 import type { UsuarioLogado } from '../sessaoUsuario'
 import {
+  abrirAnexo,
+  listarCotacoesDoVendedor,
   listarMinhasCotacoes,
   salvarMinhaCotacao,
+  type ArquivoParaAnexar,
   type CotacaoDoVendedor,
   type DadosDaCotacaoDoVendedor,
   type ItemPedido,
 } from './cotacaoDoVendedor'
+import { ImportarItens, type ResultadoImportacao } from './ImportarItens'
+import { CONFIG_TELA_VENDEDOR_PADRAO, getConfigTelaVendedor, type ConfigTelaVendedor, type FormaDeImportar, type ParteDaTelaVendedor } from './telaVendedor'
 
 // O site do vendedor: só as cotações que estão no nome dele. Ele registra a cotação (cliente, máquina,
-// os itens), acompanha o andamento e, depois que a cotação foi enviada, vê os valores que mandamos.
-// Pode alterar as dele: cada alteração fica registrada na cotação e quem está cotando é avisado (o
-// servidor é quem registra e quem filtra — ver "vendedores" no server.js).
+// os itens — digitados ou importados de planilha, foto/print, PDF ou texto), acompanha o andamento e,
+// depois que a cotação foi enviada, vê os valores que mandamos. Pode alterar as dele: cada alteração
+// fica registrada na cotação e quem está cotando é avisado (o servidor é quem registra e quem filtra —
+// ver "vendedores" no server.js). O que aparece, o Max escolhe (telaVendedor.ts) — vendo esta mesma
+// tela em `previa` (PreviaTelaVendedor), em que nada é salvo.
+
+/** A tela vista pelo Max: as cotações de `vendedor` como ele vê, com a configuração sendo editada. */
+export interface PreviaDaTela {
+  vendedor: string
+  config?: ConfigTelaVendedor
+}
+
+const MAX_BYTES_ENVIO = 14 * 1024 * 1024
 
 const INTERVALO_BUSCA_MS = 5 * 60 * 1000
 
@@ -59,29 +74,43 @@ function semMudanca(c: CotacaoDoVendedor, d: DadosDaCotacaoDoVendedor): boolean 
   )
 }
 
-export function AppVendedor({ usuario }: { usuario: UsuarioLogado }) {
+export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previa?: PreviaDaTela }) {
   const [cotacoes, setCotacoes] = useState<CotacaoDoVendedor[] | null>(null)
   const [cores, setCores] = useState<Record<string, string>>({})
   const [editando, setEditando] = useState<CotacaoDoVendedor | 'nova' | null>(null)
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('')
   const [mostrarMinhaConta, setMostrarMinhaConta] = useState(false)
+  const [configSalva, setConfigSalva] = useState<ConfigTelaVendedor>(CONFIG_TELA_VENDEDOR_PADRAO)
   useVersaoStatus()
+  const config = previa?.config ?? configSalva
+  const vendedor = previa?.vendedor ?? usuario.vendedor ?? ''
 
   const recarregar = useCallback(async () => {
     try {
-      setCotacoes(await listarMinhasCotacoes())
+      setCotacoes(await (previa ? listarCotacoesDoVendedor(previa.vendedor) : listarMinhasCotacoes()))
     } catch (err) {
       setCotacoes((atual) => atual ?? [])
-      void avisar(err instanceof Error ? err.message : 'Erro ao carregar as cotações.')
+      const naoAchou = err instanceof Error && err.message === 'not-found'
+      void avisar(
+        naoAchou && previa
+          ? 'O servidor ainda não tem a visualização da tela dos vendedores — ela chega com a atualização do servidor (atualizar-servidor\\atualizar.cmd no PC 35).'
+          : err instanceof Error
+            ? err.message
+            : 'Erro ao carregar as cotações.',
+      )
     }
-  }, [])
+  }, [previa?.vendedor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void recarregar()
     carregarStatusConfig().catch(() => {})
     getStatusColors()
       .then(setCores)
+      .catch(() => {})
+    // servidor de antes desta configuração: recusa ler — fica o padrão (tudo aparece)
+    getConfigTelaVendedor()
+      .then(setConfigSalva)
       .catch(() => {})
     const intervalo = window.setInterval(() => void recarregar(), INTERVALO_BUSCA_MS)
     const aoFocar = () => void recarregar()
@@ -112,25 +141,32 @@ export function AppVendedor({ usuario }: { usuario: UsuarioLogado }) {
           <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="" className="h-12 w-auto dark:invert" />
           <div>
             <p className="font-display text-base font-semibold text-ink-900">Minhas cotações</p>
-            <p className="text-xs text-ink-500">
-              {usuario.exibicao} · vendedor {usuario.vendedor}
-            </p>
+            <p className="text-xs text-ink-500">{previa ? `vendedor ${vendedor} · como ele vê` : `${usuario.exibicao} · vendedor ${vendedor}`}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <button type="button" onClick={() => setMostrarMinhaConta(true)} className="text-xs text-ink-500 underline hover:text-ink-700">
-            Minha conta
-          </button>
-          <button type="button" onClick={() => void sair()} className="text-xs text-ink-500 underline hover:text-ink-700">
-            Sair
-          </button>
-        </div>
+        {!previa && (
+          <div className="flex items-center gap-4">
+            <button type="button" onClick={() => setMostrarMinhaConta(true)} className="text-xs text-ink-500 underline hover:text-ink-700">
+              Minha conta
+            </button>
+            <button type="button" onClick={() => void sair()} className="text-xs text-ink-500 underline hover:text-ink-700">
+              Sair
+            </button>
+          </div>
+        )}
       </header>
 
       <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
+        {config.mensagem.trim() && (
+          <p role="note" aria-label="Recado para os vendedores" className="whitespace-pre-wrap rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            {config.mensagem.trim()}
+          </p>
+        )}
         {editando ? (
           <FormularioCotacao
             cotacao={editando === 'nova' ? undefined : editando}
+            formas={config.importar}
+            previa={!!previa}
             onCancelar={() => setEditando(null)}
             onSalva={async (mensagem) => {
               setEditando(null)
@@ -180,13 +216,21 @@ export function AppVendedor({ usuario }: { usuario: UsuarioLogado }) {
         ) : (
           <div className="space-y-2" aria-label="Lista das minhas cotações">
             {filtradas.map((c) => (
-              <CartaoCotacao key={c.id} c={c} cor={corDoStatus(c.status)} corDoStatus={corDoStatus} onEditar={editando ? undefined : () => setEditando(c)} />
+              <CartaoCotacao
+                key={c.id}
+                c={c}
+                cor={corDoStatus(c.status)}
+                corDoStatus={corDoStatus}
+                partes={config.partes}
+                onEditar={editando ? undefined : () => setEditando(c)}
+              />
             ))}
           </div>
         )}
       </main>
-      {mostrarMinhaConta && <MinhaContaModal usuario={usuario} onFechar={() => setMostrarMinhaConta(false)} />}
-      <DialogHost />
+      {/* na visualização do Max, as caixas de aviso são as do site dele */}
+      {!previa && mostrarMinhaConta && <MinhaContaModal usuario={usuario} onFechar={() => setMostrarMinhaConta(false)} />}
+      {!previa && <DialogHost />}
     </div>
   )
 }
@@ -203,15 +247,19 @@ function CartaoCotacao({
   c,
   cor,
   corDoStatus,
+  partes,
   onEditar,
 }: {
   c: CotacaoDoVendedor
   cor: string
   corDoStatus: (status: string) => string
+  /** O que o Max escolheu mostrar (telaVendedor.ts). */
+  partes: Record<ParteDaTelaVendedor, boolean>
   onEditar?: () => void
 }) {
   const [aberto, setAberto] = useState(false)
-  const v = c.valoresEnviados
+  const v = partes.valores ? c.valoresEnviados : undefined
+  const anexos = c.anexosVendedor ?? []
   const itensPedidos = c.itensPreRegistro.length > 0 ? c.itensPreRegistro : c.itensDaCotacao
   const producao = [...new Set(c.previsoesDeProducao)].sort()
   const previsoesEntrega = [...new Set(c.entregas.filter((e) => !e.entregueEm && e.previsaoEntrega).map((e) => e.previsaoEntrega))].sort()
@@ -235,7 +283,7 @@ function CartaoCotacao({
         </span>
         <SeloStatus status={c.status} cor={cor} />
         <span className="text-xs text-ink-400">
-          {c.status !== 'PENDENTE' && c.responsavelStatus ? `com ${c.responsavelStatus} · ` : ''}
+          {partes.quemCota && c.status !== 'PENDENTE' && c.responsavelStatus ? `com ${c.responsavelStatus} · ` : ''}
           {formatDate(c.createdAt).slice(0, 10)}
         </span>
         <span className="w-full text-right text-sm font-mono tabular-nums text-ink-800 sm:w-auto">{v ? formatCurrency(v.total) : ''}</span>
@@ -246,7 +294,7 @@ function CartaoCotacao({
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
             <Dado rotulo="Registrada em" valor={formatDate(c.createdAt)} />
             <Dado rotulo="Pedido do cliente em" valor={c.dataSolicitacao ? formatDate(c.dataSolicitacao).slice(0, 10) : '—'} />
-            <Dado rotulo="Quem está cotando" valor={c.status !== 'PENDENTE' && c.responsavelStatus ? c.responsavelStatus : 'ainda ninguém'} />
+            {partes.quemCota && <Dado rotulo="Quem está cotando" valor={c.status !== 'PENDENTE' && c.responsavelStatus ? c.responsavelStatus : 'ainda ninguém'} />}
             <Dado rotulo="Registrada por" valor={c.criadoPor || '—'} />
           </div>
           {c.observacao && (
@@ -256,6 +304,7 @@ function CartaoCotacao({
             </div>
           )}
 
+          {partes.valores && (
           <section aria-label="Valores">
             <p className="field-label">Valores</p>
             {v ? (
@@ -305,7 +354,9 @@ function CartaoCotacao({
               <p className="text-xs text-ink-400">Os valores aparecem aqui quando a cotação for enviada.</p>
             )}
           </section>
+          )}
 
+          {partes.itens && (
           <section aria-label="Itens pedidos">
             <p className="field-label">Itens pedidos ({itensPedidos.length})</p>
             {itensPedidos.length === 0 ? (
@@ -322,9 +373,12 @@ function CartaoCotacao({
               </ul>
             )}
           </section>
+          )}
 
+          {(partes.andamento || partes.previsoes) && (
           <section aria-label="Andamento">
             <p className="field-label">Andamento</p>
+            {partes.andamento && (
             <ol className="space-y-1">
               {c.statusHistory.map((h, n) => (
                 <li key={n} className="flex flex-wrap items-center gap-2 text-xs">
@@ -333,16 +387,41 @@ function CartaoCotacao({
                 </li>
               ))}
             </ol>
-            {(producao.length > 0 || previsoesEntrega.length > 0 || entregue) && (
+            )}
+            {partes.previsoes && (producao.length > 0 || previsoesEntrega.length > 0 || entregue) && (
               <p className="mt-2 text-xs text-ink-600">
                 {producao.length > 0 && `Produção prevista pra ${producao.map(diaBR).join(', ')}. `}
                 {previsoesEntrega.length > 0 && `Entrega prevista pra ${previsoesEntrega.map(diaBR).join(', ')}. `}
                 {entregue && 'Mercadoria entregue.'}
               </p>
             )}
+            {!partes.andamento && partes.previsoes && producao.length === 0 && previsoesEntrega.length === 0 && !entregue && (
+              <p className="text-xs text-ink-400">Ainda sem previsão.</p>
+            )}
           </section>
+          )}
 
-          {c.alteracoesVendedor.length > 0 && (
+          {partes.anexos && (anexos.length > 0 || c.planilhaCliente) && (
+            <section aria-label="Arquivos que você mandou">
+              <p className="field-label">Arquivos que você mandou</p>
+              <ul className="flex flex-wrap gap-2 text-xs">
+                {c.planilhaCliente && <li className="rounded-lg bg-ink-50 px-2 py-1 text-ink-700">Planilha do cliente: {c.planilhaCliente}</li>}
+                {anexos.map((a) => (
+                  <li key={a.id}>
+                    <button
+                      type="button"
+                      onClick={() => void abrirAnexo(c.id, a).catch((err) => avisar(err instanceof Error ? err.message : 'Não consegui abrir o arquivo.'))}
+                      className="rounded-lg border border-ink-200 px-2 py-1 text-ink-700 transition hover:bg-ink-50"
+                    >
+                      {a.tipo === 'application/pdf' ? '📄' : '🖼'} {a.nome}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {partes.alteracoes && c.alteracoesVendedor.length > 0 && (
             <section aria-label="Minhas alterações">
               <p className="field-label">Alterações que você fez</p>
               <ul className="space-y-1.5 text-xs">
@@ -389,10 +468,16 @@ function Dado({ rotulo, valor }: { rotulo: string; valor: string }) {
 /** Registrar uma cotação nova ou alterar uma das minhas. */
 function FormularioCotacao({
   cotacao,
+  formas,
+  previa,
   onCancelar,
   onSalva,
 }: {
   cotacao?: CotacaoDoVendedor
+  /** Como dá pra importar os itens (o Max escolhe). */
+  formas: Record<FormaDeImportar, boolean>
+  /** Visualização do Max: tudo funciona, mas nada é salvo. */
+  previa: boolean
   onCancelar: () => void
   onSalva: (mensagem: string) => Promise<void>
 }) {
@@ -401,34 +486,59 @@ function FormularioCotacao({
   const [data, setData] = useState(dataParaCampo(cotacao?.dataSolicitacao ?? (cotacao ? undefined : Date.now())))
   const [observacao, setObservacao] = useState(cotacao?.observacao ?? '')
   const [itens, setItens] = useState<ItemPedido[]>(() => (cotacao && cotacao.itensPreRegistro.length > 0 ? cotacao.itensPreRegistro : [itemVazio()]))
+  const [anexos, setAnexos] = useState<ArquivoParaAnexar[]>([])
+  const [planilha, setPlanilha] = useState<{ nomeArquivo: string; conteudoBase64: string } | null>(null)
+  const [importados, setImportados] = useState<string[]>([])
   const [salvando, setSalvando] = useState(false)
 
   const mudarItem = (id: string, campo: Partial<ItemPedido>) => setItens((lista) => lista.map((i) => (i.id === id ? { ...i, ...campo } : i)))
+
+  function aoImportar(r: ResultadoImportacao) {
+    const novos = r.itens.map((i) => ({ id: makeId(), interno: '', referencia: i.referencia, descricao: i.descricao, quantidade: i.quantidade }))
+    // a linha em branco do começo dá lugar aos importados
+    setItens((lista) => [...lista.filter(itemTemDados), ...novos].concat(lista.some(itemTemDados) || novos.length ? [] : [itemVazio()]))
+    if (r.cliente && !cliente.trim()) setCliente(r.cliente)
+    if (r.maquina && !maquina.trim()) setMaquina(r.maquina)
+    if (r.anexo) setAnexos((lista) => [...lista, r.anexo!])
+    if (r.planilha) setPlanilha(r.planilha)
+    setImportados((lista) => [
+      ...lista,
+      `${r.itens.length === 1 ? '1 item lido' : `${r.itens.length} itens lidos`} de “${r.origem}”${r.itens.length === 0 ? ' — nenhum item reconhecido, digite abaixo' : ''}${r.aviso ? `. ${r.aviso}` : ''}`,
+    ])
+  }
 
   async function salvar() {
     if (!cliente.trim()) return void avisar('Informe o cliente.')
     const validos = itens.filter(itemTemDados)
     // (a cotação que a equipe lançou direto na precificação não tem itens pedidos — dá pra alterar o resto dela)
     if (!cotacao && validos.length === 0) return void avisar('Informe pelo menos um item (interno, referência ou descrição).')
-    const dados = {
+    const dados: DadosDaCotacaoDoVendedor = {
       id: cotacao?.id ?? makeId(),
       cliente: cliente.trim(),
       maquina: maquina.trim(),
       observacao: observacao.trim(),
       dataSolicitacao: campoParaData(data),
       itensPreRegistro: validos.map((i) => ({ ...i, quantidade: Number(i.quantidade) || 0 })),
+      ...(anexos.length ? { anexosNovos: anexos } : {}),
+      ...(planilha ? { planilhaCliente: planilha } : {}),
     }
-    if (cotacao && semMudanca(cotacao, dados)) {
+    if (cotacao && !anexos.length && !planilha && semMudanca(cotacao, dados)) {
       onCancelar()
       return void avisar('Nada foi alterado.')
     }
+    if (previa) return void avisar('Na visualização, nada é salvo — é só pra ver como fica pro vendedor.')
+    const tamanho = [...anexos.map((a) => a.conteudoBase64), planilha?.conteudoBase64 ?? ''].reduce((s, b) => s + b.length, 0)
+    if (tamanho > MAX_BYTES_ENVIO) return void avisar('Os arquivos juntos passam do limite de envio. Tire algum e salve de novo (dá pra mandar o resto numa alteração).')
     setSalvando(true)
     try {
-      await salvarMinhaCotacao(dados)
+      const resposta = await salvarMinhaCotacao(dados)
+      // servidor de antes dos anexos: salva os itens e ignora os arquivos
+      const arquivosFicaram = !(anexos.length || planilha) || !resposta || resposta.anexosVendedor !== undefined
       await onSalva(
-        cotacao
+        (cotacao
           ? `Alteração da ${cotacao.codigo} salva. Ela fica registrada na cotação e quem está cotando é avisado.`
-          : 'Cotação registrada — ela já aparece pra equipe que cota.',
+          : 'Cotação registrada — ela já aparece pra equipe que cota.') +
+          (arquivosFicaram ? '' : '\n\nOs arquivos originais não foram guardados: o servidor ainda precisa da atualização.'),
       )
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao salvar no servidor.')
@@ -457,6 +567,42 @@ function FormularioCotacao({
           <input type="date" className="field-input" value={data} onChange={(e) => setData(e.target.value)} />
         </label>
       </div>
+
+      <ImportarItens formas={formas} onImportado={aoImportar} />
+      {importados.length > 0 && (
+        <ul role="status" aria-label="O que foi importado" className="space-y-0.5 text-xs text-ink-600">
+          {importados.map((t, n) => (
+            <li key={n}>✓ {t}</li>
+          ))}
+          <li className="text-ink-400">Confira a lista de itens abaixo antes de salvar.</li>
+        </ul>
+      )}
+      {(anexos.length > 0 || planilha) && (
+        <div aria-label="Arquivos que vão junto" className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-ink-500">Vão junto com a cotação:</span>
+          {planilha && (
+            <span className="inline-flex items-center gap-1 rounded-lg bg-ink-100 px-2 py-1 text-ink-700">
+              {planilha.nomeArquivo}
+              <button type="button" aria-label={`Não mandar ${planilha.nomeArquivo}`} onClick={() => setPlanilha(null)} className="text-ink-400 hover:text-rose-600">
+                ✕
+              </button>
+            </span>
+          )}
+          {anexos.map((a, n) => (
+            <span key={n} className="inline-flex items-center gap-1 rounded-lg bg-ink-100 px-2 py-1 text-ink-700">
+              {a.nome}
+              <button
+                type="button"
+                aria-label={`Não mandar ${a.nome}`}
+                onClick={() => setAnexos((lista) => lista.filter((_, i) => i !== n))}
+                className="text-ink-400 hover:text-rose-600"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       <fieldset>
         <legend className="field-label">Itens</legend>

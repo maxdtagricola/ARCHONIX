@@ -13,6 +13,7 @@ import {
   type TipoUsuario,
 } from '../tiposUsuario'
 import { EditorPermissoes } from './EditorPermissoes'
+import { BotaoVerTelaDoVendedor } from './TelaDosVendedoresCard'
 import { ROTULO_PAPEL, resumoPermissoes } from './TiposUsuarioCard'
 import { VENDEDORES } from '../types'
 import type { PapelUsuario } from '../sessaoUsuario'
@@ -280,6 +281,13 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                       >
                         <OpcoesDeFuncao tipos={tipos} personalizada={funcao === 'personalizada'} vendedorAtual={u.vendedor || undefined} />
                       </select>
+                      {u.papel === 'vendedor' && u.vendedor && (
+                        <BotaoVerTelaDoVendedor
+                          vendedor={u.vendedor}
+                          rotulo="Ver a tela dele"
+                          className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50"
+                        />
+                      )}
                       {u.papel === 'admin' && (
                         <button
                           type="button"

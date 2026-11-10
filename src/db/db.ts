@@ -145,6 +145,8 @@ interface OpcoesRequisicao {
   body?: string
   /** Senha de admin digitada agora — só nas operações que o servidor protege. */
   senhaAdmin?: string
+  /** Pra mandar ou baixar arquivos (fotos, PDFs), que levam mais que os 6 s de sempre. */
+  timeoutMs?: number
 }
 
 async function enviar(path: string, opcoes: OpcoesRequisicao, acesso: CredencialAcesso): Promise<Response> {
@@ -157,7 +159,7 @@ async function enviar(path: string, opcoes: OpcoesRequisicao, acesso: Credencial
   if (sessao) headers['X-Sessao'] = sessao.token
   try {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_REQUISICAO_MS)
+    const timeoutId = setTimeout(() => controller.abort(), opcoes.timeoutMs ?? TIMEOUT_REQUISICAO_MS)
     try {
       return await fetch(`${getServerUrl()}${path}`, {
         method: opcoes.method,
@@ -284,11 +286,23 @@ async function request<T>(path: string, opcoes: OpcoesRequisicao = {}): Promise<
 }
 
 /** Chamada direta a uma rota do servidor (login, usuários...) — com as mesmas senhas, sessão e mensagens de erro dos dados. */
-export function chamarServidor<T = void>(path: string, opcoes: { method?: string; corpo?: unknown } = {}): Promise<T> {
+export function chamarServidor<T = void>(path: string, opcoes: { method?: string; corpo?: unknown; timeoutMs?: number } = {}): Promise<T> {
   return request<T>(path, {
     method: opcoes.method,
     body: opcoes.corpo === undefined ? undefined : JSON.stringify(opcoes.corpo),
+    timeoutMs: opcoes.timeoutMs,
   })
+}
+
+/** Baixa um arquivo do servidor (um anexo da cotação) com o acesso e a sessão de sempre. */
+export async function baixarArquivoDoServidor(path: string): Promise<Blob> {
+  await trocarSenhaGuardadaPelaChave()
+  const res = await enviar(path, { timeoutMs: 60000 }, lerCredencial())
+  if (!res.ok) {
+    await tratarResposta(res)
+    throw new Error(`Erro do servidor (${res.status}).`)
+  }
+  return res.blob()
 }
 
 /** Confere a senha de admin no servidor antes de uma ação que pede senha. Lança 'Senha incorreta.' se não bater. */

@@ -48,6 +48,15 @@ export const ICONES_CONFIG = {
       <path d="M17.5 14.3c2 .4 3.2 1.9 3.6 4" />
     </Icone>
   ),
+  // tela com uma pessoa (a tela que o vendedor vê)
+  telaVendedores: (
+    <Icone>
+      <rect x="2.5" y="4" width="19" height="13" rx="1.5" />
+      <circle cx="12" cy="9.2" r="2.1" />
+      <path d="M8.6 14.5c.5-1.6 1.8-2.5 3.4-2.5s2.9.9 3.4 2.5" />
+      <path d="M8 20.5h8M12 17v3.5" />
+    </Icone>
+  ),
   // documento com a seta de voltar (trazer de volta de um backup)
   restaurarBackup: (
     <Icone>

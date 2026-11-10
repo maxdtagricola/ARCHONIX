@@ -4,6 +4,7 @@ import { alteracoesNaoVistas } from '../alteracoesVendedor'
 import { avisar, confirmar } from '../dialogs'
 import { formatCurrency, formatDate } from '../utils'
 import { totalAtualParaOVendedor, valoresMudaram } from '../valoresEnviados'
+import { abrirAnexo } from '../vendedor/cotacaoDoVendedor'
 import type { QuoteRecord } from '../types'
 
 /** Nos detalhes da cotação (aba Cotações): o que o vendedor dela está vendo de valores — com o botão
@@ -80,6 +81,26 @@ export function VendedorNaCotacao({ r, currentAdmin }: { r: QuoteRecord; current
           >
             {enviados ? 'Atualizar para o vendedor' : 'Enviar valores ao vendedor'}
           </button>
+        </div>
+      )}
+
+      {(cotacao.anexosVendedor ?? []).length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1 text-ink-400">O que o vendedor mandou (o original de onde vieram os itens)</p>
+          <ul className="flex flex-wrap gap-2">
+            {(cotacao.anexosVendedor ?? []).map((a) => (
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => void abrirAnexo(cotacao.id, a).catch((err) => avisar(err instanceof Error ? err.message : 'Não consegui abrir o arquivo.'))}
+                  title={`Mandado em ${formatDate(a.em)} por ${a.por}`}
+                  className="rounded-md border border-ink-200 px-2 py-1 font-medium text-ink-700 transition hover:bg-ink-50"
+                >
+                  {a.tipo === 'application/pdf' ? '📄' : '🖼'} {a.nome}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

@@ -558,6 +558,17 @@ export interface ValoresEnviados {
   atualizadoPor?: string
 }
 
+/** Um arquivo original que o vendedor mandou (a foto, o print, o PDF de onde vieram os itens) — o
+ * arquivo em si fica no servidor, fora do banco (ver "vendedores" no server.js). */
+export interface AnexoVendedor {
+  id: string
+  nome: string
+  tipo: string
+  tamanho: number
+  em: number
+  por: string
+}
+
 /** Uma alteração do vendedor: o que mudou, campo por campo (texto pronto do servidor). */
 export interface AlteracaoVendedor {
   id: string
@@ -636,6 +647,8 @@ export interface QuoteRecord {
   valoresEnviados?: ValoresEnviados
   /** O que o vendedor alterou na cotação dele (gravado pelo servidor), pra quem cota ser avisado. */
   alteracoesVendedor?: AlteracaoVendedor[]
+  /** Os originais que o vendedor mandou ao importar os itens (foto, print, PDF). */
+  anexosVendedor?: AnexoVendedor[]
   createdAt: number
   updatedAt: number
   // resumo pré-calculado para exibição rápida na lista do histórico

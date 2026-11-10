@@ -95,7 +95,15 @@ function ehMarcacaoCotar(valor: unknown): boolean {
  * cotados: entrega em branco e, em algum lugar da linha, a marcação "cotar"
  * (maiúscula ou minúscula). Procura a tabela em todas as abas.
  */
-export async function lerPlanilhaCotacao(arquivo: File): Promise<ResultadoImportacaoCotacao> {
+export async function lerPlanilhaCotacao(
+  arquivo: File,
+  opcoes: {
+    /** false: todas as linhas da tabela (a planilha que o cliente manda ao vendedor não tem as marcas
+     * "COTAR" nem prazos — ver vendedor/ImportarItens). */
+    soMarcadosCotar?: boolean
+  } = {},
+): Promise<ResultadoImportacaoCotacao> {
+  const soMarcados = opcoes.soMarcadosCotar ?? true
   const buffer = await arquivo.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array' })
   const { ws, tabela } = abaComTabelaItens(workbook)
@@ -128,17 +136,19 @@ export async function lerPlanilhaCotacao(arquivo: File): Promise<ResultadoImport
     }
     linhasVaziasSeguidas = 0
 
-    const entregaValor = tabela.colEntrega > -1 ? cellValue(ws, r, tabela.colEntrega) : undefined
-    if (!vazio(entregaValor)) continue // já tem prazo de entrega — não precisa ser cotado
+    if (soMarcados) {
+      const entregaValor = tabela.colEntrega > -1 ? cellValue(ws, r, tabela.colEntrega) : undefined
+      if (!vazio(entregaValor)) continue // já tem prazo de entrega — não precisa ser cotado
 
-    let temMarcacaoCotar = false
-    for (let c = 1; c <= tabela.maxCol; c++) {
-      if (ehMarcacaoCotar(cellValue(ws, r, c))) {
-        temMarcacaoCotar = true
-        break
+      let temMarcacaoCotar = false
+      for (let c = 1; c <= tabela.maxCol; c++) {
+        if (ehMarcacaoCotar(cellValue(ws, r, c))) {
+          temMarcacaoCotar = true
+          break
+        }
       }
+      if (!temMarcacaoCotar) continue
     }
-    if (!temMarcacaoCotar) continue
 
     itens.push({
       referencia,

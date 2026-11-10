@@ -33,6 +33,7 @@ import { listNotasFiscaisGerais } from '../db/notasFiscaisGeraisRepo'
 import type { TipoStatus } from '../statusConfig'
 import { FeriadosCard } from '../components/FeriadosCard'
 import { RestaurarBackupCard } from '../components/RestaurarBackupCard'
+import { TelaDosVendedoresCard } from '../components/TelaDosVendedoresCard'
 import { useSessao } from '../sessaoUsuario'
 import { MinhaContaForm } from '../components/MinhaContaModal'
 import { ICONES_CONFIG } from '../components/IconesConfiguracoes'
@@ -51,8 +52,9 @@ type SecaoConfig = keyof typeof ICONES_CONFIG
 
 /** As partes de cada um (ou deste aparelho) — aparecem mesmo pra quem não tem as Configurações gerais. */
 const SECOES_PESSOAIS: SecaoConfig[] = ['conta', 'saida', 'fundo']
-/** Só pro gestor (o Max): quem usa o site, as funções de usuário, os status e a restauração de backup. */
-const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'statusCotacoes', 'statusNotas', 'restaurarBackup']
+/** Só pro gestor (o Max): quem usa o site, as funções de usuário, a tela dos vendedores, os status e a
+ * restauração de backup. */
+const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'telaVendedores', 'statusCotacoes', 'statusNotas', 'restaurarBackup']
 
 /** As partes da aba, na ordem dos símbolos (as mais usadas primeiro). */
 const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNode }[] = [
@@ -60,6 +62,7 @@ const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNod
   { id: 'saida', titulo: 'Saída automática', resumo: 'Sair sozinho depois de um tempo sem uso', icone: ICONES_CONFIG.saida },
   { id: 'usuarios', titulo: 'Usuários', resumo: 'Cadastrar, função, permissões e nova senha', icone: ICONES_CONFIG.usuarios },
   { id: 'tiposUsuario', titulo: 'Funções de usuário', resumo: 'O que cada função acessa (e quem é administrador)', icone: ICONES_CONFIG.tiposUsuario },
+  { id: 'telaVendedores', titulo: 'Tela dos vendedores', resumo: 'Ver como o vendedor vê e escolher o que aparece', icone: ICONES_CONFIG.telaVendedores },
   { id: 'statusCotacoes', titulo: 'Status das cotações', resumo: 'Nome, cor, ordem e status novos', icone: ICONES_CONFIG.statusCotacoes },
   { id: 'statusNotas', titulo: 'Status de frete e notas', resumo: 'Nome, cor, ordem e status novos', icone: ICONES_CONFIG.statusNotas },
   { id: 'formacao', titulo: 'Formação de preço', resumo: 'Imposto federal, comissão e custo fixo', icone: ICONES_CONFIG.formacao },
@@ -401,6 +404,8 @@ export function ConfiguracoesPage({
         )
       case 'usuarios':
         return <UsuariosCard embutido />
+      case 'telaVendedores':
+        return <TelaDosVendedoresCard />
       case 'restaurarBackup':
         return <RestaurarBackupCard />
       case 'feriados':
