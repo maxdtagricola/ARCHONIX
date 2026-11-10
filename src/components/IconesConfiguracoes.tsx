@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react'
 
-// Símbolos das partes da aba Configurações — mesmo traço dos da barra lateral (IconesAbas.tsx), maiores.
+// Símbolos das partes da aba Configurações — mesmo traço dos da barra lateral (IconesAbas.tsx), maiores
+// (e maiores ainda nas telas grandes).
 
 function Icone({ children }: { children: ReactNode }) {
   return (
     <svg
       width="26"
       height="26"
+      className="h-[26px] w-[26px] xl:h-8 xl:w-8 2xl:h-9 2xl:w-9"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

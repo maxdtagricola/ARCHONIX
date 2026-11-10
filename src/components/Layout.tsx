@@ -150,7 +150,8 @@ export function Layout({
 
   // abas compactas (pouco espaço entre elas) pra caber o menu inteiro na tela sem rolar; no celular
   // ficam um pouco mais altas, que é toque de dedo
-  const itemCls = `w-full flex items-center gap-2.5 rounded-lg px-3 py-2 sm:py-[3px] text-sm font-medium transition ${
+  // nas telas grandes (2xl ≥ 1536 px) o texto acompanha os símbolos maiores (ver IconesAbas)
+  const itemCls = `w-full flex items-center gap-2.5 2xl:gap-3 rounded-lg px-3 py-2 sm:py-[3px] text-sm 2xl:text-[15px] font-medium transition ${
     recolhido ? 'justify-center' : ''
   }`
   const rotuloMenu = recolhido ? 'Expandir menu' : 'Recolher menu'
@@ -163,7 +164,7 @@ export function Layout({
 
       <aside
         className={`fixed sm:sticky top-0 h-screen z-40 flex flex-col border-r border-ink-100 bg-surface transition-all duration-200 w-64 ${
-          collapsed ? 'sm:w-[4.5rem]' : 'sm:w-60'
+          collapsed ? 'sm:w-[4.5rem]' : 'sm:w-60 2xl:w-64'
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} sm:translate-x-0`}
       >
         <div className={`flex items-center gap-2.5 border-b border-ink-100 px-3 py-2 ${recolhido ? 'justify-center' : ''}`}>
@@ -209,7 +210,7 @@ export function Layout({
             title="Voltar pra tela anterior"
             className={`${itemCls} text-ink-500 ${podeVoltar ? 'hover:bg-ink-100 hover:text-ink-800' : 'opacity-30 cursor-not-allowed'}`}
           >
-            <span aria-hidden className="w-[18px] shrink-0 text-center">
+            <span aria-hidden className="w-[18px] xl:w-[21px] 2xl:w-6 shrink-0 text-center 2xl:text-base">
               ←
             </span>
             {!recolhido && <span>Voltar</span>}

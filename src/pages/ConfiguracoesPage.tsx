@@ -726,13 +726,14 @@ export function ConfiguracoesPage({
             type="button"
             onClick={() => setAberta(s.id)}
             aria-haspopup="dialog"
-            className="card group flex flex-col items-center gap-2 !p-4 text-center transition hover:-translate-y-0.5 hover:border-ink-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+            className="card group flex flex-col items-center gap-2 !p-4 2xl:!p-5 text-center transition hover:-translate-y-0.5 hover:border-ink-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
           >
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-ink-100 text-ink-800 transition group-hover:bg-ink-200 group-hover:text-ink-950">
+            {/* nas telas grandes o símbolo cresce junto com o ícone (ver IconesConfiguracoes) */}
+            <span className="flex h-12 w-12 xl:h-14 xl:w-14 2xl:h-16 2xl:w-16 items-center justify-center rounded-2xl bg-ink-100 text-ink-800 transition group-hover:bg-ink-200 group-hover:text-ink-950">
               {s.icone}
             </span>
-            <span className="text-sm font-semibold leading-tight text-ink-900">{s.titulo}</span>
-            <span className="text-[11px] leading-snug text-ink-400">{s.resumo}</span>
+            <span className="text-sm 2xl:text-base font-semibold leading-tight text-ink-900">{s.titulo}</span>
+            <span className="text-[11px] 2xl:text-xs leading-snug text-ink-400">{s.resumo}</span>
           </button>
         ))}
       </div>
@@ -780,7 +781,7 @@ function PainelConfiguracao({
         className="card flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden !p-0 outline-none animate-[dialog-pop-in_0.18s_cubic-bezier(0.16,1,0.3,1)]"
       >
         <div className="flex items-center gap-3 border-b border-ink-100 px-5 py-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ink-100 text-ink-800 [&_svg]:h-5 [&_svg]:w-5">
+          <span className="flex h-9 w-9 2xl:h-11 2xl:w-11 shrink-0 items-center justify-center rounded-xl bg-ink-100 text-ink-800 [&_svg]:h-5 [&_svg]:w-5 2xl:[&_svg]:h-6 2xl:[&_svg]:w-6">
             {icone}
           </span>
           <h3 className="min-w-0 flex-1 truncate font-display text-lg font-semibold text-ink-900">{titulo}</h3>

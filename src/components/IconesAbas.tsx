@@ -3,13 +3,14 @@ import type { TabKey } from './Layout'
 
 // Símbolos das abas da barra lateral — traço simples na cor do texto (currentColor), então
 // acompanham o tema claro/escuro e o destaque da aba aberta. Com o menu recolhido, são eles que
-// identificam cada aba.
+// identificam cada aba. Crescem nas telas grandes (xl ≥ 1280 px, 2xl ≥ 1536 px), onde sobra espaço.
 
 function Icone({ children }: { children: ReactNode }) {
   return (
     <svg
       width="18"
       height="18"
+      className="h-[18px] w-[18px] xl:h-[21px] xl:w-[21px] 2xl:h-6 2xl:w-6"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
