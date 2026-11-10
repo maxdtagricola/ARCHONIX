@@ -59,7 +59,7 @@ export function LoginPage() {
       <FundoEmVideo pausado={fundoPausado} />
       {/* "relative" (sem z-index): fica por cima do vídeo, e as caixas de aviso continuam por cima dela */}
       <div className="card relative max-w-sm w-full shadow-xl">
-        <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="Archonix" className="mx-auto mb-4 h-20 w-auto dark:invert" />
+        <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="Archonix" className="mx-auto mb-4 h-28 w-auto dark:invert" />
         {etapa.tipo === 'usuario' && (
           <EtapaUsuario
             usuario={usuario}

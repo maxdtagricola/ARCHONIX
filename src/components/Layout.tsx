@@ -174,10 +174,11 @@ export function Layout({
             title={telaGrande ? rotuloMenu : 'Fechar menu'}
             aria-label={telaGrande ? rotuloMenu : 'Fechar menu'}
             aria-expanded={telaGrande ? !recolhido : mobileOpen}
-            className="group relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-600 transition hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2"
+            className="group relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-600 transition hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2"
           >
-            {/* a logo é preta, com fundo transparente: invertida, fica branca no quadrado (escuro nos dois temas) */}
-            <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="" className="h-8 w-8 object-contain invert" />
+            {/* a logo é preta, com fundo transparente: invertida, fica branca no quadrado (escuro nos dois
+             * temas); o quadrado ocupa a largura toda do menu recolhido, pra logo ficar bem visível */}
+            <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="" className="h-11 w-11 object-contain invert" />
             <span
               aria-hidden
               className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 shadow-sm transition group-hover:border-ink-400 group-hover:text-ink-900"
@@ -192,7 +193,8 @@ export function Layout({
               <h1 className="font-display text-[15px] font-bold leading-tight text-ink-900 tracking-tight truncate">
                 Archonix
               </h1>
-              <p className="text-[11px] leading-tight text-ink-400 truncate">Markup, ICMS-ST, RBC e PIS/COFINS</p>
+              {/* em duas linhas se precisar (cabe na altura da logo), em vez de cortar com "…" */}
+              <p className="text-[11px] leading-tight text-ink-400">Markup, ICMS-ST, RBC e PIS/COFINS</p>
             </div>
           )}
         </div>
@@ -327,7 +329,10 @@ export function Layout({
           >
             ☰
           </button>
-          <h1 className="font-display text-base font-bold text-ink-900">Archonix</h1>
+          <div className="flex items-center gap-2">
+            <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="" className="h-9 w-auto dark:invert" />
+            <h1 className="font-display text-base font-bold text-ink-900">Archonix</h1>
+          </div>
           <div className="w-9" />
         </header>
         <main className={`relative flex-1 w-full px-4 sm:px-6 py-6 sm:py-8 ${fundo ? 'com-fundo-video' : ''}`}>

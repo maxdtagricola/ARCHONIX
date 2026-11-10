@@ -109,7 +109,7 @@ export function AppVendedor({ usuario }: { usuario: UsuarioLogado }) {
     <div className="min-h-screen bg-ink-50">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-surface px-4 py-3">
         <div className="flex items-center gap-3">
-          <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="" className="h-8 w-8 object-contain dark:invert" />
+          <img src={`${import.meta.env.BASE_URL}logo-archonix.png`} alt="" className="h-12 w-auto dark:invert" />
           <div>
             <p className="font-display text-base font-semibold text-ink-900">Minhas cotações</p>
             <p className="text-xs text-ink-500">
