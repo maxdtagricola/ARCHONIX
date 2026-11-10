@@ -1,4 +1,6 @@
-import { pedirMotivoArquivamento, pedirProducao, type RespostaProducao } from './dialogs'
+import { confirmar, pedirMotivoArquivamento, pedirProducao, type RespostaProducao } from './dialogs'
+import { formatCurrency } from './utils'
+import { totalAtualParaOVendedor, valoresMudaram } from './valoresEnviados'
 import { fornecedoresDoPedido, itensDoPedidoDeCompra } from './fornecedoresDoPedido'
 import type { QuoteItem, QuoteRecord, QuoteStatus } from './types'
 
@@ -40,13 +42,19 @@ export function perguntarProducao(cotacao: Pick<QuoteRecord, 'codigo' | 'items' 
 export interface RespostasDoStatus {
   arquivamento?: { motivo: string; detalhe: string }
   producao?: RespostaProducao
+  /** Indo de novo pra ENVIADO com valores diferentes dos que o vendedor vê: trocar pelos de agora? */
+  atualizarValoresDoVendedor?: boolean
 }
 
 /** Pergunta o que o novo status precisa antes de mudar. null = cancelou, e o status não deve mudar. */
 export async function perguntarAntesDoStatus(
-  cotacao: Pick<QuoteRecord, 'codigo' | 'items' | 'pedidoCompra' | 'producao'>,
+  cotacao: Pick<QuoteRecord, 'codigo' | 'items' | 'pedidoCompra' | 'producao'> & Partial<Pick<QuoteRecord, 'vendedor' | 'valoresEnviados'>>,
   novoStatus: QuoteStatus,
 ): Promise<RespostasDoStatus | null> {
+  if (novoStatus === 'ENVIADO') {
+    const atualizar = await perguntarSeReenviaAoVendedor(cotacao)
+    return atualizar === undefined ? {} : { atualizarValoresDoVendedor: atualizar }
+  }
   if (novoStatus === 'ARQUIVO') {
     // arquivar sempre pede o motivo de a cotação não ter fechado — sem motivo, não arquiva
     const arquivamento = await pedirMotivoArquivamento(`Por que a cotação ${cotacao.codigo || ''} não foi fechada?`)
@@ -57,4 +65,18 @@ export async function perguntarAntesDoStatus(
     return producao ? { producao } : null
   }
   return {}
+}
+
+/** A cotação vai de novo pra ENVIADO e os valores mudaram desde o último envio ao vendedor: pergunta
+ * se ele passa a ver os de agora (ver valoresEnviados.ts). undefined = não há o que perguntar. */
+export async function perguntarSeReenviaAoVendedor(
+  cotacao: Pick<QuoteRecord, 'items'> & Partial<Pick<QuoteRecord, 'vendedor' | 'valoresEnviados'>>,
+): Promise<boolean | undefined> {
+  if (!cotacao.vendedor || !cotacao.valoresEnviados || !valoresMudaram({ items: cotacao.items, valoresEnviados: cotacao.valoresEnviados })) return undefined
+  return confirmar(
+    `A cotação vai como enviada, mas os valores mudaram desde o que o vendedor ${cotacao.vendedor} vê ` +
+      `(total ${formatCurrency(cotacao.valoresEnviados.total)} → ${formatCurrency(totalAtualParaOVendedor(cotacao.items))}).\n\n` +
+      'Atualizar os valores que o vendedor vê?',
+    { titulo: 'Valores do vendedor', confirmText: 'Atualizar para o vendedor', cancelText: 'Manter os enviados' },
+  )
 }

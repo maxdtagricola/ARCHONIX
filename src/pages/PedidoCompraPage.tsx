@@ -431,7 +431,9 @@ export function PedidoCompraPage({
     const respostas = await perguntarAntesDoStatus(cotacao, novoStatus)
     if (!respostas) return
     try {
-      await updateQuoteStatus(cotacao.id, novoStatus, currentAdmin, undefined, respostas.arquivamento, respostas.producao)
+      await updateQuoteStatus(cotacao.id, novoStatus, currentAdmin, undefined, respostas.arquivamento, respostas.producao, {
+        atualizarValoresDoVendedor: respostas.atualizarValoresDoVendedor,
+      })
       await refresh()
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao atualizar o status.')

@@ -15,6 +15,7 @@ import { calculateItem, definirTabelasCustomizadas } from './calc/calculator'
 import { formatCurrency, formatDate, mesmoFornecedor, valoresDaCotacaoDoFornecedor } from './utils'
 import { atualizarValoresEnviados, buscarQuote, listQuotes, saveQuote, setPlanilhaOriginal, updateQuoteStatus } from './db/analysesRepo'
 import { totalAtualParaOVendedor, valoresMudaram } from './valoresEnviados'
+import { perguntarSeReenviaAoVendedor } from './mudancaDeStatus'
 import { AvisoAlteracoesVendedor } from './components/AvisoAlteracoesVendedor'
 import { lerPlanilhaCliente } from './db/planilhasClienteRepo'
 import { observacoesPorReferencia, sincronizarProdutos } from './db/produtosRepo'
@@ -614,7 +615,10 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
   async function handleEnviarCotacao() {
     if (!editingQuoteId || !currentAdmin) return
     if (activeStatus === 'PENDENTE' || activeStatus === 'ANALISANDO VALORES') {
-      await updateQuoteStatus(editingQuoteId, 'ENVIADO', currentAdmin)
+      // já foi enviada antes e os valores mudaram: o vendedor passa a ver os novos?
+      const salva = await buscarQuote(editingQuoteId)
+      const atualizar = salva ? await perguntarSeReenviaAoVendedor(salva) : undefined
+      await updateQuoteStatus(editingQuoteId, 'ENVIADO', currentAdmin, undefined, undefined, undefined, { atualizarValoresDoVendedor: atualizar })
       setActiveStatus('ENVIADO')
       setActiveResponsavel(currentAdmin)
       setHistoryRefreshKey((k) => k + 1)
@@ -693,9 +697,10 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
 
   /** Salva a cotação aberta — true se gravou (usado por quem precisa saber, ex.: "Salvar e fechar"). */
   /** Os valores salvos ficaram diferentes dos que o vendedor vê (ver valoresEnviados.ts): pergunta se
-   * troca — sem confirmação, ele continua vendo os que foram enviados. */
+   * troca — sem confirmação, ele continua vendo os que foram enviados. Só com a cotação em ENVIADO: em
+   * outro status, o vendedor só vê os valores novos quando ela for enviada de novo. */
   async function perguntarSeAtualizaOVendedor(record: QuoteRecord) {
-    if (!record.vendedor || !record.valoresEnviados || !valoresMudaram(record)) return
+    if (record.status !== 'ENVIADO' || !record.vendedor || !record.valoresEnviados || !valoresMudaram(record)) return
     const enviados = record.valoresEnviados
     const trocar = await confirmar(
       `O vendedor ${record.vendedor} está vendo os valores enviados em ${formatDate(enviados.atualizadoEm ?? enviados.enviadoEm)} ` +

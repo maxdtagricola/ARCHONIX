@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { dbGet } from '../db/db'
 import { sair } from '../auth'
 import { DialogHost } from '../components/DialogHost'
 import { MinhaContaModal } from '../components/MinhaContaModal'
@@ -35,6 +36,21 @@ export interface PreviaDaTela {
 }
 
 const MAX_BYTES_ENVIO = 14 * 1024 * 1024
+
+// a planilha (e as bibliotecas de planilha) só vem quando o vendedor abre
+const PlanilhaDoVendedor = lazy(() => import('./PlanilhaDoVendedor').then((m) => ({ default: m.PlanilhaDoVendedor })))
+
+/** A planilha original do cliente, do jeito que veio. */
+async function baixarPlanilhaOriginal(idCotacao: string, nomeArquivo: string) {
+  try {
+    const original = await dbGet<{ conteudoBase64: string }>('planilhasCliente', idCotacao, { semCache: true })
+    if (!original) return void avisar('A planilha do cliente não foi encontrada no servidor.')
+    const { baixarBlob, blobDoBase64 } = await import('../planilhaCliente')
+    baixarBlob(blobDoBase64(original.conteudoBase64, nomeArquivo), nomeArquivo)
+  } catch (err) {
+    void avisar(err instanceof Error ? err.message : 'Não consegui baixar a planilha.')
+  }
+}
 
 const INTERVALO_BUSCA_MS = 5 * 60 * 1000
 
@@ -258,8 +274,11 @@ function CartaoCotacao({
   onEditar?: () => void
 }) {
   const [aberto, setAberto] = useState(false)
+  const [planilhaAberta, setPlanilhaAberta] = useState(false)
   const v = partes.valores ? c.valoresEnviados : undefined
   const anexos = c.anexosVendedor ?? []
+  // status repetidos em seguida (ida e volta registrada duas vezes) aparecem uma vez só
+  const andamento = c.statusHistory.map((h) => h.status).filter((s, i, todos) => i === 0 || s !== todos[i - 1])
   const itensPedidos = c.itensPreRegistro.length > 0 ? c.itensPreRegistro : c.itensDaCotacao
   const producao = [...new Set(c.previsoesDeProducao)].sort()
   const previsoesEntrega = [...new Set(c.entregas.filter((e) => !e.entregueEm && e.previsaoEntrega).map((e) => e.previsaoEntrega))].sort()
@@ -345,10 +364,31 @@ function CartaoCotacao({
                     </tfoot>
                   </table>
                 </div>
+                {/* quando foi enviada (e quando mudou) não aparece pro vendedor — só se os valores foram atualizados */}
                 <p className="mt-1 text-xs text-ink-400">
-                  Enviada em {formatDate(v.enviadoEm)} por {v.enviadoPor}
-                  {v.atualizadoEm ? ` · valores atualizados em ${formatDate(v.atualizadoEm)} por ${v.atualizadoPor}` : ''}
+                  Valores que a equipe enviou{v.atualizada || v.atualizadoEm ? ' · valores atualizados pela equipe' : ''}
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPlanilhaAberta(true)}
+                    className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:bg-ink-50"
+                  >
+                    Ver em planilha
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlanilhaAberta(true)}
+                    className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-semibold text-surface transition hover:opacity-90"
+                  >
+                    Compartilhar
+                  </button>
+                </div>
+                {planilhaAberta && (
+                  <Suspense fallback={null}>
+                    <PlanilhaDoVendedor c={c} valores={v} onFechar={() => setPlanilhaAberta(false)} />
+                  </Suspense>
+                )}
               </>
             ) : (
               <p className="text-xs text-ink-400">Os valores aparecem aqui quando a cotação for enviada.</p>
@@ -378,12 +418,17 @@ function CartaoCotacao({
           {(partes.andamento || partes.previsoes) && (
           <section aria-label="Andamento">
             <p className="field-label">Andamento</p>
+            {/* só a sequência dos status, sem quando cada um mudou */}
             {partes.andamento && (
-            <ol className="space-y-1">
-              {c.statusHistory.map((h, n) => (
-                <li key={n} className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="w-32 shrink-0 text-ink-400">{formatDate(h.changedAt)}</span>
-                  <SeloStatus status={h.status} cor={corDoStatus(h.status)} />
+            <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs" aria-label="Status pelos quais a cotação passou">
+              {andamento.map((status, n) => (
+                <li key={n} className="flex items-center gap-1.5">
+                  {n > 0 && (
+                    <span aria-hidden className="text-ink-300">
+                      →
+                    </span>
+                  )}
+                  <SeloStatus status={status} cor={corDoStatus(status)} />
                 </li>
               ))}
             </ol>
@@ -402,10 +447,21 @@ function CartaoCotacao({
           )}
 
           {partes.anexos && (anexos.length > 0 || c.planilhaCliente) && (
-            <section aria-label="Arquivos que você mandou">
-              <p className="field-label">Arquivos que você mandou</p>
+            <section aria-label="Arquivos da cotação">
+              <p className="field-label">Arquivos da cotação</p>
               <ul className="flex flex-wrap gap-2 text-xs">
-                {c.planilhaCliente && <li className="rounded-lg bg-ink-50 px-2 py-1 text-ink-700">Planilha do cliente: {c.planilhaCliente}</li>}
+                {/* a planilha do cliente fica anexada como veio (a equipe preenche em cima dela) */}
+                {c.planilhaCliente && (
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => void baixarPlanilhaOriginal(c.id, c.planilhaCliente!)}
+                      className="rounded-lg border border-ink-200 px-2 py-1 text-ink-700 transition hover:bg-ink-50"
+                    >
+                      📊 Planilha do cliente (original): {c.planilhaCliente}
+                    </button>
+                  </li>
+                )}
                 {anexos.map((a) => (
                   <li key={a.id}>
                     <button

@@ -152,7 +152,9 @@ export function HistoryPage({
     const respostas = await perguntarAntesDoStatus(record, novoStatus)
     if (!respostas) return
     try {
-      await updateQuoteStatus(record.id, novoStatus, currentAdmin, undefined, respostas.arquivamento, respostas.producao)
+      await updateQuoteStatus(record.id, novoStatus, currentAdmin, undefined, respostas.arquivamento, respostas.producao, {
+        atualizarValoresDoVendedor: respostas.atualizarValoresDoVendedor,
+      })
       refresh()
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao atualizar o status.')

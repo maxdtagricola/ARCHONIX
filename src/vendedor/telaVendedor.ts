@@ -21,7 +21,7 @@ export const PARTES_DA_TELA_VENDEDOR: { key: ParteDaTelaVendedor; label: string 
   { key: 'previsoes', label: 'Previsão de produção e de entrega' },
   { key: 'quemCota', label: 'Quem está cotando' },
   { key: 'alteracoes', label: 'Alterações que ele fez' },
-  { key: 'anexos', label: 'Arquivos que ele mandou' },
+  { key: 'anexos', label: 'Arquivos da cotação (planilha do cliente, fotos, PDFs)' },
 ]
 
 export const FORMAS_DE_IMPORTAR: { key: FormaDeImportar; label: string }[] = [

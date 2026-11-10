@@ -277,6 +277,9 @@ export const updateQuoteStatus = emFila(async function updateQuoteStatus(
   arquivamento?: { motivo: string; detalhe: string },
   /** Produção do pedido (todo ou parte) — pedida ao ir pra PEDIDO CONFIRMADO (ver pedirProducao). */
   producao?: Omit<ProducaoPedido, 'em' | 'por'>,
+  /** Indo de novo pra ENVIADO: troca os valores do vendedor pelos de agora (quem cota confirmou —
+   * ver perguntarSeReenviaAoVendedor). */
+  opcoes?: { atualizarValoresDoVendedor?: boolean },
 ): Promise<QuoteRecord> {
   const atual = await dbGet<QuoteRecord | LegacyAnalysisRecord>(STORE_ANALISES, id)
   if (!atual) throw new Error('Cotação não encontrada no servidor.')
@@ -297,11 +300,15 @@ export const updateQuoteStatus = emFila(async function updateQuoteStatus(
       novoStatus === 'ARQUIVO' && arquivamento ? { ...arquivamento, em: now, por: atorAdmin } : normalizado.motivoArquivamento,
     producao: novoStatus === 'PEDIDO CONFIRMADO' && producao ? { ...producao, em: now, por: atorAdmin } : normalizado.producao,
     // a primeira ida pra ENVIADO tira a cópia dos valores que o vendedor passa a ver (ver
-    // valoresEnviados.ts); depois disso, só troca quando quem cota confirma
+    // valoresEnviados.ts); depois disso, só troca numa nova ida pra ENVIADO em que quem cota confirma
     valoresEnviados:
-      novoStatus === 'ENVIADO' && !normalizado.valoresEnviados
-        ? montarValoresEnviados(normalizado.items, atorAdmin, now)
-        : normalizado.valoresEnviados,
+      novoStatus !== 'ENVIADO'
+        ? normalizado.valoresEnviados
+        : !normalizado.valoresEnviados
+          ? montarValoresEnviados(normalizado.items, atorAdmin, now)
+          : opcoes?.atualizarValoresDoVendedor
+            ? montarValoresEnviados(normalizado.items, atorAdmin, now, normalizado.valoresEnviados)
+            : normalizado.valoresEnviados,
     updatedAt: now,
   }
   await dbPut(STORE_ANALISES, atualizado)

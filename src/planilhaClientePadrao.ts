@@ -1,9 +1,9 @@
 import ExcelJS from 'exceljs'
-import { calculateItem } from './calc/calculator'
 import { LOGO_VENDAS_DANIEL_TRATORES_BASE64 } from './logoVendasDanielTratores'
 import { MIME_XLSX, paginaDeImpressao, type PlanilhaAtualizada } from './planilhaCliente'
+import { itensParaOVendedor } from './valoresEnviados'
 import { abrirXlsx, renderizarAba } from './xlsxOriginal'
-import type { QuoteItem } from './types'
+import type { ItemValorEnviado, QuoteItem } from './types'
 
 // -----------------------------------------------------------------------
 // Planilha do cliente gerada do zero, pra cotação que não veio de uma
@@ -138,22 +138,20 @@ function montarCabecalho(ws: ExcelJS.Worksheet, dados: DadosPlanilhaPadrao, uf: 
 
 /** Devolve a última linha de item. O unitário vai sem arredondar (a tela mostra com 2 casas): assim
  * unitário × quantidade dá o mesmo total do site e do PDF, sem diferença de centavos. */
-function montarItens(ws: ExcelJS.Worksheet, items: QuoteItem[]): number {
-  items.forEach((item, i) => {
+function montarItens(ws: ExcelJS.Worksheet, itens: ItemValorEnviado[]): number {
+  itens.forEach((item, i) => {
     const linha = PRIMEIRA_LINHA_ITEM + i
-    const { product } = item
-    const { precoVendaTotal } = calculateItem(product, item.pricing)
-    const qtd = product.qtd || 0
+    const qtd = item.quantidade || 0
     ws.getRow(linha).height = 18.75
 
     const valores: Record<number, ExcelJS.CellValue> = {
-      [COL.marca]: product.marca.trim(),
-      [COL.entrega]: product.prazoEntrega.trim(),
-      [COL.referencia]: product.referencia.trim() || product.interno.trim(),
-      [COL.descricao]: product.descricao.trim(),
+      [COL.marca]: item.marca.trim(),
+      [COL.entrega]: item.entrega.trim(),
+      [COL.referencia]: item.referencia.trim(),
+      [COL.descricao]: item.descricao.trim(),
       [COL.quant]: qtd,
-      [COL.vlrUnt]: qtd > 0 ? precoVendaTotal / qtd : 0,
-      [COL.vlrTotal]: { formula: `F${linha}*E${linha}`, result: precoVendaTotal, date1904: false },
+      [COL.vlrUnt]: qtd > 0 ? item.valorTotal / qtd : 0,
+      [COL.vlrTotal]: { formula: `F${linha}*E${linha}`, result: item.valorTotal, date1904: false },
     }
     for (let c = COL.marca; c <= COL.vlrTotal; c++) {
       const celula = ws.getCell(linha, c)
@@ -166,7 +164,7 @@ function montarItens(ws: ExcelJS.Worksheet, items: QuoteItem[]): number {
     ws.getCell(linha, COL.vlrUnt).numFmt = FORMATO_MOEDA
     ws.getCell(linha, COL.vlrTotal).numFmt = FORMATO_MOEDA
   })
-  return PRIMEIRA_LINHA_ITEM + items.length - 1
+  return PRIMEIRA_LINHA_ITEM + itens.length - 1
 }
 
 function montarRodape(ws: ExcelJS.Worksheet, ultimaLinhaItem: number, total: number, vendedor: string): number {
@@ -197,6 +195,17 @@ function montarRodape(ws: ExcelJS.Worksheet, ultimaLinhaItem: number, total: num
 /** A planilha do molde padrão, já preenchida com os itens da cotação — no mesmo formato da importada
  * depois de atualizada, pra as duas passarem pela mesma tela. */
 export async function gerarPlanilhaPadrao(items: QuoteItem[], dados: DadosPlanilhaPadrao, titulo = 'Planilha do cliente'): Promise<PlanilhaAtualizada> {
+  return gerarPlanilhaPadraoDosValores(itensParaOVendedor(items), dados, items[0]?.product.perfil ?? 'RO', titulo)
+}
+
+/** O mesmo molde, a partir dos valores já calculados (os que foram pro vendedor — ver
+ * valoresEnviados.ts). `uf`: o estado de destino, que vai no cabeçalho. */
+export async function gerarPlanilhaPadraoDosValores(
+  itens: ItemValorEnviado[],
+  dados: DadosPlanilhaPadrao,
+  uf: string,
+  titulo = 'Planilha do cliente',
+): Promise<PlanilhaAtualizada> {
   const workbook = new ExcelJS.Workbook()
   const ws = workbook.addWorksheet(NOME_ABA)
   ws.columns = LARGURA_COLUNAS.map((width) => ({ width }))
@@ -208,9 +217,9 @@ export async function gerarPlanilhaPadrao(items: QuoteItem[], dados: DadosPlanil
     editAs: 'oneCell',
   })
 
-  montarCabecalho(ws, dados, items[0]?.product.perfil ?? 'RO')
-  const ultimaLinhaItem = montarItens(ws, items)
-  const total = items.reduce((s, item) => s + calculateItem(item.product, item.pricing).precoVendaTotal, 0)
+  montarCabecalho(ws, dados, uf)
+  const ultimaLinhaItem = montarItens(ws, itens)
+  const total = itens.reduce((s, item) => s + item.valorTotal, 0)
   const ultimaLinha = montarRodape(ws, ultimaLinhaItem, total, dados.vendedor)
 
   ws.pageSetup = {
@@ -228,7 +237,7 @@ export async function gerarPlanilhaPadrao(items: QuoteItem[], dados: DadosPlanil
     htmlPreview: previa.html,
     previaFiel: true,
     paginaImpressao: paginaDeImpressao(previa, titulo),
-    itensAtualizados: items.length,
+    itensAtualizados: itens.length,
     itensComValorNaPlanilha: [],
   }
 }

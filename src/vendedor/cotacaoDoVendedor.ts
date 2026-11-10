@@ -1,5 +1,17 @@
 import { baixarArquivoDoServidor, chamarServidor, dbGetAll, STORE_ANALISES } from '../db/db'
-import type { AlteracaoVendedor, AnexoVendedor, QuoteStatus, StatusChange, ValoresEnviados } from '../types'
+import type { AlteracaoVendedor, AnexoVendedor, ItemValorEnviado, QuoteStatus } from '../types'
+
+/** Os valores enviados como o vendedor recebe: sem quando nem quem enviou (servidores de antes
+ * mandavam as datas — a tela não mostra). */
+export interface ValoresParaOVendedor {
+  itens: ItemValorEnviado[]
+  total: number
+  uf?: string
+  /** Quem cota trocou os valores depois do primeiro envio. */
+  atualizada?: boolean
+  /** (servidores de antes) */
+  atualizadoEm?: number
+}
 
 // A cotação como o servidor entrega ao vendedor (ver "vendedores" no server.js): só as que estão no
 // nome dele, e sem custos, fornecedores, margens, frete, pedido de compra ou faturamento. Os valores,
@@ -25,12 +37,13 @@ export interface CotacaoDoVendedor {
   status: QuoteStatus
   /** Quem está cotando (vazio enquanto PENDENTE). */
   responsavelStatus: string
-  statusHistory: Pick<StatusChange, 'status' | 'changedAt'>[]
+  /** Só a sequência dos status — sem as datas (servidores de antes mandavam; a tela não mostra). */
+  statusHistory: { status: QuoteStatus; changedAt?: number }[]
   /** Os itens que o vendedor pediu (é o que ele altera). */
   itensPreRegistro: ItemPedido[]
   /** Os itens já na precificação — só o que identifica cada um. */
   itensDaCotacao: Omit<ItemPedido, 'id'>[]
-  valoresEnviados?: ValoresEnviados
+  valoresEnviados?: ValoresParaOVendedor
   /** Previsões de a produção ficar pronta ("AAAA-MM-DD"). */
   previsoesDeProducao: string[]
   entregas: { previsaoEntrega: string; entregueEm?: number }[]

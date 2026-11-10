@@ -110,6 +110,38 @@ export function gerarPlanilhaAtualizada(
   nomeArquivo = 'planilha.xlsx',
   titulo = 'Planilha do cliente',
 ): PlanilhaAtualizada {
+  const linhas = items
+    .filter((it) => it.product.referencia.trim())
+    .map((it): LinhaParaPreencher => {
+      const resultado = calculateItem(it.product, it.pricing)
+      return {
+        referencia: it.product.referencia,
+        descricao: it.product.descricao,
+        entrega: it.product.prazoEntrega,
+        valorUnitario: resultado.precoVendaUnitario,
+        valorTotal: resultado.precoVendaTotal,
+      }
+    })
+  return preencherPlanilhaDoCliente(conteudoBase64, linhas, nomeArquivo, titulo)
+}
+
+/** O que vai numa linha da planilha do cliente — os valores já calculados (da cotação aberta, pra
+ * equipe; os enviados, pro vendedor — ver vendedor/PlanilhaDoVendedor). */
+export interface LinhaParaPreencher {
+  referencia: string
+  descricao: string
+  entrega: string
+  valorUnitario: number
+  valorTotal: number
+}
+
+/** O preenchimento em si (ver gerarPlanilhaAtualizada): casa cada linha da planilha pela referência. */
+export function preencherPlanilhaDoCliente(
+  conteudoBase64: string,
+  itens: LinhaParaPreencher[],
+  nomeArquivo = 'planilha.xlsx',
+  titulo = 'Planilha do cliente',
+): PlanilhaAtualizada {
   const bytes = base64ParaBytes(conteudoBase64)
   const workbook = XLSX.read(bytes, { type: 'array' })
   // a mesma aba de onde a cotação foi importada (a primeira que tem a tabela de itens)
@@ -135,9 +167,8 @@ export function gerarPlanilhaAtualizada(
     const referenciaTexto = cellTexto(ws, r, tabela.colReferencia)
     if (referenciaTexto) {
       // mesma referência ignorando espaço/hífen/maiúscula ("KK-45376" = "kk45376")
-      const item = items.find((it) => it.product.referencia.trim() && mesmaReferencia(it.product.referencia, referenciaTexto))
+      const item = itens.find((it) => it.referencia.trim() && mesmaReferencia(it.referencia, referenciaTexto))
       if (item) {
-        const resultado = calculateItem(item.product, item.pricing)
         const unitarioNaPlanilha = valorNaCelula(ws, r, tabela.colVlrUnt)
         const totalNaPlanilha = valorNaCelula(ws, r, tabela.colVlrTotal)
         if (unitarioNaPlanilha !== undefined || totalNaPlanilha !== undefined) {
@@ -145,22 +176,22 @@ export function gerarPlanilhaAtualizada(
           const ehUnitario = unitarioNaPlanilha !== undefined
           itensComValorNaPlanilha.push({
             referencia: referenciaTexto,
-            descricao: item.product.descricao,
+            descricao: item.descricao,
             linha: r,
             valorNaPlanilha: ehUnitario ? unitarioNaPlanilha : totalNaPlanilha!,
             tipoDoValor: ehUnitario ? 'unitário' : 'total',
-            valorDoSite: Number((ehUnitario ? resultado.precoVendaUnitario : resultado.precoVendaTotal).toFixed(2)),
+            valorDoSite: Number((ehUnitario ? item.valorUnitario : item.valorTotal).toFixed(2)),
           })
         } else {
           if (tabela.colVlrUnt > -1) {
-            escrever(r, tabela.colVlrUnt, Number(resultado.precoVendaUnitario.toFixed(2)))
+            escrever(r, tabela.colVlrUnt, Number(item.valorUnitario.toFixed(2)))
           }
           if (tabela.colVlrTotal > -1) {
-            escrever(r, tabela.colVlrTotal, Number(resultado.precoVendaTotal.toFixed(2)))
+            escrever(r, tabela.colVlrTotal, Number(item.valorTotal.toFixed(2)))
           }
           // prazo que o cliente já tinha escrito fica
-          if (tabela.colEntrega > -1 && item.product.prazoEntrega.trim() && !cellTexto(ws, r, tabela.colEntrega)) {
-            escrever(r, tabela.colEntrega, item.product.prazoEntrega.trim())
+          if (tabela.colEntrega > -1 && item.entrega.trim() && !cellTexto(ws, r, tabela.colEntrega)) {
+            escrever(r, tabela.colEntrega, item.entrega.trim())
           }
           for (let c = 1; c <= tabela.maxCol; c++) {
             if (/^(a\s+)?cotar[\s!.]*$/.test(normalizar(cellValue(ws, r, c)))) apagar(r, c)
@@ -232,6 +263,11 @@ export async function montarPlanilhaImportada(
   const planilha = await carregar()
   if (!planilha) throw new Error('A planilha original dessa cotação não foi encontrada no servidor.')
   return gerarPlanilhaAtualizada(planilha.conteudoBase64, items, nomeArquivo, titulo)
+}
+
+/** O arquivo guardado (base64) de volta como arquivo — pra baixar o original como veio. */
+export function blobDoBase64(conteudoBase64: string, nomeArquivo: string): Blob {
+  return new Blob([base64ParaBytes(conteudoBase64) as Uint8Array<ArrayBuffer>], { type: tipoDoArquivo(nomeArquivo).mime })
 }
 
 export function baixarBlob(blob: Blob, nomeArquivo: string): void {

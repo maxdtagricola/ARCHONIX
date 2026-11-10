@@ -680,7 +680,9 @@ export function CotacoesPage({
     const respostas = await perguntarAntesDoStatus(record, novoStatus)
     if (!respostas) return
     try {
-      await updateQuoteStatus(record.id, novoStatus, currentAdmin, undefined, respostas.arquivamento, respostas.producao)
+      await updateQuoteStatus(record.id, novoStatus, currentAdmin, undefined, respostas.arquivamento, respostas.producao, {
+        atualizarValoresDoVendedor: respostas.atualizarValoresDoVendedor,
+      })
       refresh()
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao atualizar o status.')
@@ -734,7 +736,7 @@ export function CotacoesPage({
         <div className="relative">
           <svg
             aria-hidden
-            className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-400"
+            className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 2xl:h-6 2xl:w-6 -translate-y-1/2 text-ink-400"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"

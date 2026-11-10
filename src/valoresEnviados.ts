@@ -28,10 +28,12 @@ export function itensParaOVendedor(items: QuoteItem[]): ItemValorEnviado[] {
 export function montarValoresEnviados(items: QuoteItem[], por: string, em: number, anterior?: ValoresEnviados): ValoresEnviados {
   const itens = itensParaOVendedor(items)
   const total = itens.reduce((s, i) => s + i.valorTotal, 0)
+  // o estado de destino (vai no cabeçalho da planilha padrão que o vendedor baixa)
+  const uf = items[0]?.product.perfil ?? 'RO'
   // trocar os valores mantém quando foi o envio; só a primeira vez é envio
   return anterior
-    ? { itens, total, enviadoEm: anterior.enviadoEm, enviadoPor: anterior.enviadoPor, atualizadoEm: em, atualizadoPor: por }
-    : { itens, total, enviadoEm: em, enviadoPor: por }
+    ? { itens, total, uf, enviadoEm: anterior.enviadoEm, enviadoPor: anterior.enviadoPor, atualizadoEm: em, atualizadoPor: por }
+    : { itens, total, uf, enviadoEm: em, enviadoPor: por }
 }
 
 const centavos = (v: number) => Math.round(v * 100)

@@ -73,14 +73,19 @@ export function VendedorNaCotacao({ r, currentAdmin }: { r: QuoteRecord; current
       {(mudou || (!enviados && jaFoiEnviada)) && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-2 py-1.5 text-amber-800">
           {mudou && <span>Os valores de agora somam {formatCurrency(totalAgora)} — diferentes dos que ele vê.</span>}
-          <button
-            type="button"
-            disabled={ocupado}
-            onClick={() => void atualizar()}
-            className="rounded-md border border-amber-300 bg-surface px-2 py-1 font-medium text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
-          >
-            {enviados ? 'Atualizar para o vendedor' : 'Enviar valores ao vendedor'}
-          </button>
+          {/* o vendedor só passa a ver valores novos com a cotação em ENVIADO */}
+          {enviados && cotacao.status !== 'ENVIADO' ? (
+            <span>Ele só vê os novos quando a cotação for enviada de novo.</span>
+          ) : (
+            <button
+              type="button"
+              disabled={ocupado}
+              onClick={() => void atualizar()}
+              className="rounded-md border border-amber-300 bg-surface px-2 py-1 font-medium text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+            >
+              {enviados ? 'Atualizar para o vendedor' : 'Enviar valores ao vendedor'}
+            </button>
+          )}
         </div>
       )}
 

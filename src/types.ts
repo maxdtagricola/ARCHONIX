@@ -550,6 +550,8 @@ export interface ItemValorEnviado {
 export interface ValoresEnviados {
   itens: ItemValorEnviado[]
   total: number
+  /** Estado de destino (RO/AC) — o cabeçalho da planilha padrão. Ausente nos gravados antes. */
+  uf?: string
   /** Quando foi pra ENVIADO (a primeira vez que o vendedor passou a ver valores) e quem mandou. */
   enviadoEm: number
   enviadoPor: string
