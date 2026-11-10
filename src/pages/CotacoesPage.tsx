@@ -24,6 +24,8 @@ import { itensDoPedidoDeCompra, perguntarAntesDoStatus } from '../mudancaDeStatu
 import { DetalheProducao, SeloProducao } from '../components/SeloProducao'
 import { previsoesDeProducao } from '../fornecedoresDoPedido'
 import { AndamentoDoPedido } from '../components/AndamentoDoPedido'
+import { VendedorNaCotacao } from '../components/VendedorNaCotacao'
+import { alteracoesNaoVistas } from '../alteracoesVendedor'
 
 const vendedorOptions = [{ value: '', label: '— selecione —' }, ...VENDEDORES.map((v) => ({ value: v, label: v }))]
 const NOVO = '__novo__'
@@ -269,6 +271,11 @@ function QuoteCard({
             {nomeDoStatus(r.status)}
           </span>
           {r.status === 'PENDENTE' && <TempoPendente r={r} />}
+          {alteracoesNaoVistas(r, currentAdmin).length > 0 && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+              alterada pelo vendedor
+            </span>
+          )}
           {r.status === 'PEDIDO CONFIRMADO' && r.producao && (
             <SeloProducao producao={r.producao} totalItens={itensDoPedidoDeCompra(r).length} previsoes={previsoesDeProducao(r)} />
           )}
@@ -334,6 +341,7 @@ function QuoteCard({
             <p className="mb-1 text-ink-400">Datas do processamento</p>
             <AndamentoDoPedido cotacao={r} corDoStatus={corDoStatus} />
           </div>
+          <VendedorNaCotacao r={r} currentAdmin={currentAdmin} />
           {r.status === 'ARQUIVO' && r.motivoArquivamento && (
             <div className="rounded-lg border border-ink-200 bg-ink-50 px-3 py-2">
               <p className="text-ink-400">Arquivada sem fechar — motivo</p>

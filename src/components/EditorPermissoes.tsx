@@ -1,15 +1,24 @@
 import { ABAS_CONFIGURAVEIS } from '../abasPermitidas'
+import { ABAS_FINANCEIRAS } from '../financeiroPorUsuario'
 import { nomeDoStatus, statusDe, type TipoStatus } from '../statusConfig'
 import { PARTES_TELA_INICIAL, TODAS_AS_PARTES, type ParteTelaInicial } from '../telaInicialPorUsuario'
 import type { PermissoesDoUsuario } from '../tiposUsuario'
 import type { TabKey } from './Layout'
 
-/** Caixinhas de abas, do que aparece na Tela Inicial e de status (pra quais status pode mudar) — o mesmo
- * editor pra um usuário e pra um tipo de usuário. Tudo marcado = sem restrição (vale também pro que
- * for criado depois). */
+/** Caixinha de administrador (vê prejuízo e faturamento), caixinhas de abas, do que aparece na Tela
+ * Inicial e de status (pra quais status pode mudar) — o mesmo editor pra um usuário e pra uma função.
+ * Tudo marcado = sem restrição (vale também pro que for criado depois). */
 export function EditorPermissoes({ valor, onChange }: { valor: PermissoesDoUsuario; onChange: (novo: PermissoesDoUsuario) => void }) {
   const grupos = Array.from(new Set(ABAS_CONFIGURAVEIS.map((a) => a.grupo)))
   const partesMarcadas = valor.telaInicial ?? TODAS_AS_PARTES
+  const financeiro = !!valor.financeiro
+
+  // Faturamento e Relatórios andam junto com o administrador: entram ao marcar, saem ao desmarcar
+  function alternarFinanceiro() {
+    const semFinanceiras = valor.abas.filter((a) => !ABAS_FINANCEIRAS.includes(a))
+    const abas = financeiro ? semFinanceiras : [...semFinanceiras, ...ABAS_FINANCEIRAS]
+    onChange({ ...valor, financeiro: !financeiro, abas: ABAS_CONFIGURAVEIS.map((a) => a.key).filter((k) => abas.includes(k)) })
+  }
 
   function definirPartes(marcadas: ParteTelaInicial[]) {
     const todas = TODAS_AS_PARTES.every((p) => marcadas.includes(p))
@@ -57,11 +66,23 @@ export function EditorPermissoes({ valor, onChange }: { valor: PermissoesDoUsuar
 
   return (
     <div className="space-y-4">
+      <label className="flex items-start gap-2 rounded-lg border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-800">
+        <input type="checkbox" className="mt-1" aria-label="Administrador: vê prejuízo e faturamento" checked={financeiro} onChange={alternarFinanceiro} />
+        <span>
+          <span className="font-semibold">Administrador</span> — vê prejuízo e faturamento
+          <span className="block text-[11px] text-ink-400">
+            As abas Faturamento e Relatórios, o resultado das transferências (faturado / parado no estoque), o faturamento × prejuízo
+            do Dashboard de Transferências, o aviso de prejuízo da Tela Inicial e o valor faturado do Dashboard. Sem isso, nada
+            disso aparece.
+          </span>
+        </span>
+      </label>
+
       <fieldset>
         <legend className="mb-1 text-xs font-semibold text-ink-700">
           Abas que vê
           {atalhos(
-            () => onChange({ ...valor, abas: ABAS_CONFIGURAVEIS.map((a) => a.key) }),
+            () => onChange({ ...valor, abas: ABAS_CONFIGURAVEIS.map((a) => a.key).filter((k) => financeiro || !ABAS_FINANCEIRAS.includes(k)) }),
             () => onChange({ ...valor, abas: [] }),
           )}
         </legend>
@@ -72,12 +93,26 @@ export function EditorPermissoes({ valor, onChange }: { valor: PermissoesDoUsuar
           {grupos.map((grupo) => (
             <div key={grupo}>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">{grupo}</p>
-              {ABAS_CONFIGURAVEIS.filter((a) => a.grupo === grupo).map((a) => (
-                <label key={a.key} className="flex items-center gap-2 py-0.5 text-sm text-ink-700">
-                  <input type="checkbox" checked={valor.abas.includes(a.key)} onChange={() => alternarAba(a.key)} />
-                  {a.label}
-                </label>
-              ))}
+              {ABAS_CONFIGURAVEIS.filter((a) => a.grupo === grupo).map((a) => {
+                const soAdministrador = !financeiro && ABAS_FINANCEIRAS.includes(a.key)
+                return (
+                  <label key={a.key} className={`flex items-center gap-2 py-0.5 text-sm ${soAdministrador ? 'text-ink-300' : 'text-ink-700'}`}>
+                    <input
+                      type="checkbox"
+                      disabled={soAdministrador}
+                      checked={!soAdministrador && valor.abas.includes(a.key)}
+                      onChange={() => alternarAba(a.key)}
+                    />
+                    {a.label}
+                    {soAdministrador && (
+                      <>
+                        {' '}
+                        <span className="text-[11px] text-ink-400">só administrador</span>
+                      </>
+                    )}
+                  </label>
+                )
+              })}
             </div>
           ))}
         </div>

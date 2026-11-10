@@ -7,7 +7,7 @@ import { useSyncExternalStore } from 'react'
 // servidor encerrar a sessão (senha trocada, usuário excluído, 30 dias sem
 // uso).
 // -----------------------------------------------------------------------
-export type PapelUsuario = 'admin' | 'xadrez'
+export type PapelUsuario = 'admin' | 'xadrez' | 'vendedor'
 
 export interface UsuarioLogado {
   /** Nome de login, sem acento e maiúsculo (ex.: "MAXIMUS"). */
@@ -16,8 +16,11 @@ export interface UsuarioLogado {
   exibicao: string
   /** Como o app conhece o usuário — cotações, histórico (ex.: "Max"). */
   nome: string
-  /** 'admin' vê o site todo; 'xadrez' é o nome antigo de quem está sem função: só vê a própria conta. */
+  /** 'admin' vê o site todo; 'vendedor' só as cotações que estão no nome dele (ver vendedor/); 'xadrez'
+   * é o nome antigo de quem está sem função: só vê a própria conta. */
   papel: PapelUsuario
+  /** Do vendedor: o nome dele nas cotações (ex.: "EDSON"). */
+  vendedor?: string
   /** Gerencia os usuários (o Max). */
   gestor: boolean
   /** Cadastrado sozinho e ainda esperando o Max definir a função. */

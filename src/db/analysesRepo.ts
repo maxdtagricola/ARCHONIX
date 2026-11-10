@@ -5,6 +5,7 @@ import { makeId } from '../utils'
 import { estaACaminho, mercadoriaRecebida } from '../avisosEntrega'
 import { conferirPermissaoDeStatus } from '../statusConfig'
 import { excluirPlanilhaCliente, gravarPlanilhaCliente, type PlanilhaClienteArquivo } from './planilhasClienteRepo'
+import { montarValoresEnviados } from '../valoresEnviados'
 import type {
   DadosFreteTransportadora,
   DadosTransporte,
@@ -295,7 +296,43 @@ export const updateQuoteStatus = emFila(async function updateQuoteStatus(
     motivoArquivamento:
       novoStatus === 'ARQUIVO' && arquivamento ? { ...arquivamento, em: now, por: atorAdmin } : normalizado.motivoArquivamento,
     producao: novoStatus === 'PEDIDO CONFIRMADO' && producao ? { ...producao, em: now, por: atorAdmin } : normalizado.producao,
+    // a primeira ida pra ENVIADO tira a cópia dos valores que o vendedor passa a ver (ver
+    // valoresEnviados.ts); depois disso, só troca quando quem cota confirma
+    valoresEnviados:
+      novoStatus === 'ENVIADO' && !normalizado.valoresEnviados
+        ? montarValoresEnviados(normalizado.items, atorAdmin, now)
+        : normalizado.valoresEnviados,
     updatedAt: now,
+  }
+  await dbPut(STORE_ANALISES, atualizado)
+  return atualizado
+})
+
+/** Troca os valores que o vendedor vê pelos de agora (quem cota confirmou — ver valoresEnviados.ts). */
+export const atualizarValoresEnviados = emFila(async function atualizarValoresEnviados(id: string, atorAdmin: string): Promise<QuoteRecord> {
+  const atual = await dbGet<QuoteRecord | LegacyAnalysisRecord>(STORE_ANALISES, id)
+  if (!atual) throw new Error('Cotação não encontrada no servidor.')
+  const normalizado = normalizeRecord(atual)
+  const now = Date.now()
+  const atualizado: QuoteRecord = {
+    ...normalizado,
+    valoresEnviados: montarValoresEnviados(normalizado.items, atorAdmin, now, normalizado.valoresEnviados),
+    updatedAt: now,
+  }
+  await dbPut(STORE_ANALISES, atualizado)
+  return atualizado
+})
+
+/** Quem cota viu os avisos de alteração do vendedor nessa cotação. */
+export const marcarAlteracoesVistas = emFila(async function marcarAlteracoesVistas(id: string, nome: string): Promise<QuoteRecord> {
+  const atual = await dbGet<QuoteRecord | LegacyAnalysisRecord>(STORE_ANALISES, id)
+  if (!atual) throw new Error('Cotação não encontrada no servidor.')
+  const normalizado = normalizeRecord(atual)
+  const atualizado: QuoteRecord = {
+    ...normalizado,
+    alteracoesVendedor: (normalizado.alteracoesVendedor ?? []).map((a) =>
+      (a.vistaPor ?? []).includes(nome) ? a : { ...a, vistaPor: [...(a.vistaPor ?? []), nome] },
+    ),
   }
   await dbPut(STORE_ANALISES, atualizado)
   return atualizado

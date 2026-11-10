@@ -72,6 +72,8 @@ const NOMES_DAS_CONFIGURACOES: Record<string, string> = {
   abasPorUsuario: 'Abas de cada usuário',
   telaInicialPorUsuario: 'Tela Inicial de cada usuário',
   permissoesStatus: 'Quem pode mudar cada status',
+  financeiroPorUsuario: 'Quem vê prejuízo e faturamento',
+  tiposUsuario: 'Funções de usuário',
   empresaPorTransportadora: 'Empresa de destino por transportadora',
   planilhaAtiva: 'Planilha de markup em uso',
   contadorCotacao: 'Contador dos códigos de cotação',

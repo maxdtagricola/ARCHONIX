@@ -15,6 +15,9 @@ const CONFIG_TRANSFERENCIAS: ConfigRegistroNotas = {
   controleResultado: true,
 }
 
-export function AcompanhamentoNotasPage({ currentAdmin }: { currentAdmin: string }) {
-  return <RegistroNotasPage currentAdmin={currentAdmin} config={CONFIG_TRANSFERENCIAS} />
+// sem administrador, nada de faturado / prejuízo (o resultado já marcado continua na nota, só não aparece)
+const CONFIG_TRANSFERENCIAS_SEM_RESULTADO: ConfigRegistroNotas = { ...CONFIG_TRANSFERENCIAS, controleResultado: false }
+
+export function AcompanhamentoNotasPage({ currentAdmin, veFinanceiro }: { currentAdmin: string; veFinanceiro: boolean }) {
+  return <RegistroNotasPage currentAdmin={currentAdmin} config={veFinanceiro ? CONFIG_TRANSFERENCIAS : CONFIG_TRANSFERENCIAS_SEM_RESULTADO} />
 }

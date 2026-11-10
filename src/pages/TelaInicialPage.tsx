@@ -116,6 +116,7 @@ export function TelaInicialPage({
   onContinuar,
   onIrPara,
   podeVer,
+  veFinanceiro,
   partes,
   onAbrirPedido,
 }: {
@@ -131,6 +132,8 @@ export function TelaInicialPage({
   onIrPara: (tab: TabKey) => void
   /** As abas do usuário — os atalhos e o bloco de Transferências só aparecem pra quem tem a aba. */
   podeVer: (tab: TabKey) => boolean
+  /** Administrador: o aviso de prejuízo das transferências só aparece pra quem vê prejuízo e faturamento. */
+  veFinanceiro: boolean
   /** As partes da Tela Inicial deste usuário; null = ainda chegando do servidor. */
   partes: ParteTelaInicial[] | null
   /** "Abrir pedido" na janela de transporte: Pedido de Compra com essa cotação aberta. */
@@ -237,14 +240,15 @@ export function TelaInicialPage({
     const porStatus = ordemComExtras('notas', abertas.map((n) => n.status)).map((status) => ({ status, quantidade: abertas.filter((n) => n.status === status).length })).filter(
       (s) => s.quantidade > 0,
     )
-    const emPrejuizo = notas.filter((n) => prejuizoAutomatico(n) && valoresPorResultado(n).parado > 0)
+    // o prejuízo só pra administrador (ver financeiroPorUsuario.ts)
+    const emPrejuizo = veFinanceiro ? notas.filter((n) => prejuizoAutomatico(n) && valoresPorResultado(n).parado > 0) : []
     return {
       abertas: abertas.length,
       porStatus,
       prejuizo: emPrejuizo.reduce((s, n) => s + valoresPorResultado(n).parado, 0),
       notasEmPrejuizo: emPrejuizo.length,
     }
-  }, [notas])
+  }, [notas, veFinanceiro])
 
   async function recarregar() {
     try {

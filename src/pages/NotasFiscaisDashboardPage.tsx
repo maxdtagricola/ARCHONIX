@@ -119,8 +119,10 @@ function formatCurrencyCompacto(v: number): string {
 }
 
 /** Mesmo layout do Dashboard de cotações (ver AnalyticsPage): título + KPIs coloridos no topo,
- * sidebar de filtros com o donut de status compacto, área principal com o resto dos gráficos. */
-export function NotasFiscaisDashboardPage() {
+ * sidebar de filtros com o donut de status compacto, área principal com o resto dos gráficos. O
+ * faturamento × prejuízo e os produtos faturados e parados só aparecem pra administrador
+ * (`veFinanceiro`, ver financeiroPorUsuario.ts). */
+export function NotasFiscaisDashboardPage({ veFinanceiro }: { veFinanceiro: boolean }) {
   const [notas, setNotas] = useState<NotaFiscal[]>([])
   const [loading, setLoading] = useState(true)
   const [coresStatus, setCoresStatus] = useState<Record<string, string>>({})
@@ -379,6 +381,8 @@ export function NotasFiscaisDashboardPage() {
               />
             </div>
 
+            {veFinanceiro && (
+            <>
             <div className="card">
               <h3 className="font-display text-base font-semibold text-ink-900 mb-1">Faturamento × prejuízo</h3>
               <p className="text-xs text-ink-400 mb-4">
@@ -426,6 +430,8 @@ export function NotasFiscaisDashboardPage() {
                 />
               </div>
             </div>
+            </>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="card">

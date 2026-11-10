@@ -1,48 +1,96 @@
 import { useEffect, useState } from 'react'
 import { cadastrarUsuario, definirPapel, excluirUsuario, liberarNovaSenha, listarUsuarios, type UsuarioCadastrado } from '../auth'
 import { avisar, confirmar } from '../dialogs'
-import { ABAS_PADRAO, getAbasPorUsuario } from '../abasPermitidas'
-import { getPermissoesStatus, type PermissoesStatusDoUsuario } from '../statusConfig'
-import { getTelaInicialPorUsuario, type ParteTelaInicial } from '../telaInicialPorUsuario'
-import { aplicarPermissoes, getTiposUsuario, mesmasPermissoes, type PermissoesDoUsuario, type TipoUsuario } from '../tiposUsuario'
+import {
+  PERMISSOES_ADMIN,
+  aplicarPermissoes,
+  carregarPermissoesGuardadas,
+  funcaoDoUsuario,
+  getTiposUsuario,
+  permissoesDoUsuario,
+  type PermissoesDoUsuario,
+  type PermissoesGuardadas,
+  type TipoUsuario,
+} from '../tiposUsuario'
 import { EditorPermissoes } from './EditorPermissoes'
 import { ROTULO_PAPEL, resumoPermissoes } from './TiposUsuarioCard'
-import type { TabKey } from './Layout'
+import { VENDEDORES } from '../types'
 import type { PapelUsuario } from '../sessaoUsuario'
 
 const NOME_VALIDO = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{1,19}$/u
 
-/** Configurações › Usuários — só pro Max: cadastra quem vai usar o site (escolhendo um tipo, ou a
- * função), define as permissões de cada um (abas, Tela Inicial e status), libera senha nova, exclui. */
+interface EscolhaDeFuncao {
+  papel: PapelUsuario
+  /** Do vendedor: de qual vendedor são as cotações dele. */
+  vendedor?: string
+  permissoes: PermissoesDoUsuario | null
+  rotulo: string
+}
+
+/** O que uma escolha do campo "Função" vale: o papel no servidor e as permissões (sem função e
+ * vendedor, nenhuma — o vendedor tem o site dele, ver vendedor/AppVendedor). */
+function escolhaDaFuncao(valor: string, tipos: TipoUsuario[]): EscolhaDeFuncao | null {
+  if (valor === 'xadrez') return { papel: 'xadrez', permissoes: null, rotulo: ROTULO_PAPEL.xadrez }
+  if (valor === 'admin') return { papel: 'admin', permissoes: PERMISSOES_ADMIN, rotulo: ROTULO_PAPEL.admin }
+  if (valor.startsWith('vendedor:') && valor.length > 'vendedor:'.length) {
+    const vendedor = valor.slice('vendedor:'.length)
+    return { papel: 'vendedor', vendedor, permissoes: null, rotulo: `Vendedor ${vendedor}` }
+  }
+  const tipo = tipos.find((t) => `tipo:${t.id}` === valor)
+  if (!tipo) return null
+  return { papel: tipo.papel, permissoes: tipo.papel === 'admin' ? tipo : null, rotulo: tipo.nome }
+}
+
+/** As opções do campo "Função": o Administrador, as funções criadas pelo Max, os vendedores e o "sem
+ * função". `vendedorAtual`: o de quem já é vendedor, se não estiver mais na lista. */
+function OpcoesDeFuncao({ tipos, personalizada = false, vendedorAtual }: { tipos: TipoUsuario[]; personalizada?: boolean; vendedorAtual?: string }) {
+  const vendedores = vendedorAtual && !VENDEDORES.includes(vendedorAtual) ? [...VENDEDORES, vendedorAtual] : VENDEDORES
+  return (
+    <>
+      <option value="admin">{ROTULO_PAPEL.admin}</option>
+      {tipos.map((t) => (
+        <option key={t.id} value={`tipo:${t.id}`}>
+          {t.nome}
+        </option>
+      ))}
+      <optgroup label={ROTULO_PAPEL.vendedor}>
+        {vendedores.map((v) => (
+          <option key={v} value={`vendedor:${v}`}>
+            Vendedor {v}
+          </option>
+        ))}
+      </optgroup>
+      {personalizada && (
+        <option value="personalizada" disabled>
+          Personalizada (ajustada só pra ele)
+        </option>
+      )}
+      <option value="xadrez">{ROTULO_PAPEL.xadrez}</option>
+    </>
+  )
+}
+
+/** Configurações › Usuários — só pro Max: cadastra quem vai usar o site, escolhe a função de cada um
+ * (que define o que ele acessa — ver Funções de usuário), ajusta as permissões de alguém só pra ele,
+ * libera senha nova, exclui. */
 /** `embutido`: dentro da janela de Configurações, que já tem a moldura e o título. */
 export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) {
   const [usuarios, setUsuarios] = useState<UsuarioCadastrado[]>([])
   const [carregando, setCarregando] = useState(true)
   const [ocupado, setOcupado] = useState<string | null>(null)
-  const [abasPorUsuario, setAbasPorUsuario] = useState<Record<string, TabKey[]>>({})
-  const [statusPorUsuario, setStatusPorUsuario] = useState<Record<string, PermissoesStatusDoUsuario>>({})
-  const [telaPorUsuario, setTelaPorUsuario] = useState<Record<string, ParteTelaInicial[]>>({})
+  const [guardadas, setGuardadas] = useState<PermissoesGuardadas>({ abas: {}, status: {}, telaInicial: {}, financeiro: {} })
   const [tipos, setTipos] = useState<TipoUsuario[]>([])
   const [editando, setEditando] = useState<{ login: string; permissoes: PermissoesDoUsuario } | null>(null)
   const [nomeNovo, setNomeNovo] = useState('')
-  const [tipoNovo, setTipoNovo] = useState('')
-  const [papelNovo, setPapelNovo] = useState<PapelUsuario>('admin')
+  const [funcaoNova, setFuncaoNova] = useState('admin')
 
   async function recarregar() {
     setCarregando(true)
     try {
-      const [lista, abas, status, tela, listaTipos] = await Promise.all([
-        listarUsuarios(),
-        getAbasPorUsuario(),
-        getPermissoesStatus(),
-        getTelaInicialPorUsuario(),
-        getTiposUsuario(),
-      ])
+      const [lista, g, listaTipos] = await Promise.all([listarUsuarios(), carregarPermissoesGuardadas(), getTiposUsuario()])
       // quem espera uma definição primeiro, depois na ordem do cadastro
       setUsuarios(lista.sort((a, b) => Number(b.pendente) - Number(a.pendente) || a.criadoEm.localeCompare(b.criadoEm)))
-      setAbasPorUsuario(abas)
-      setStatusPorUsuario(status)
-      setTelaPorUsuario(tela)
+      setGuardadas(g)
       setTipos(listaTipos)
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao carregar os usuários.')
@@ -68,39 +116,38 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
     }
   }
 
-  function permissoesDe(login: string): PermissoesDoUsuario {
-    const status = statusPorUsuario[login]
-    return {
-      abas: abasPorUsuario[login] ?? ABAS_PADRAO,
-      statusCotacoes: status?.cotacoes ?? null,
-      statusNotas: status?.notas ?? null,
-      telaInicial: telaPorUsuario[login] ?? null,
-    }
-  }
-
-  function tipoDe(u: UsuarioCadastrado): TipoUsuario | undefined {
-    if (u.papel !== 'admin') return undefined
-    const p = permissoesDe(u.login)
-    return tipos.find((t) => t.papel === 'admin' && mesmasPermissoes(t, p))
-  }
-
   async function handleCadastrar() {
     const nome = nomeNovo.trim().replace(/\s+/g, ' ')
     if (!NOME_VALIDO.test(nome)) {
       void avisar('O nome de usuário precisa ter de 2 a 20 letras ou números (pode ter espaço, ponto, hífen ou _).')
       return
     }
-    const tipo = tipos.find((t) => t.id === tipoNovo)
-    const papel = tipo ? tipo.papel : papelNovo
+    const funcao = escolhaDaFuncao(funcaoNova, tipos)
+    if (!funcao) return void avisar('Escolha a função do novo usuário.')
     await executar(
       '__novo__',
       async () => {
-        const { login } = await cadastrarUsuario(nome, papel)
-        if (tipo && tipo.papel === 'admin') await aplicarPermissoes(login, tipo)
+        const { login } = await cadastrarUsuario(nome, funcao.papel, funcao.vendedor)
+        if (funcao.permissoes) await aplicarPermissoes(login, funcao.permissoes)
         setNomeNovo('')
       },
-      `${nome} cadastrado como ${tipo ? `"${tipo.nome}"` : `"${ROTULO_PAPEL[papel]}"`}. No primeiro acesso, ele digita o nome de usuário e cria a própria senha` +
-        (papel === 'admin' ? ' — as permissões dele dá pra ajustar aqui, em "Permissões".' : '.'),
+      `${nome} cadastrado como "${funcao.rotulo}". No primeiro acesso, ele digita o nome de usuário e cria a própria senha.`,
+    )
+  }
+
+  /** Muda a função: o papel no servidor e, com função, as permissões dela. */
+  async function handleFuncao(u: UsuarioCadastrado, valor: string) {
+    const funcao = escolhaDaFuncao(valor, tipos)
+    if (!funcao) return
+    if (!(await confirmar(`Definir ${u.exibicao} como "${funcao.rotulo}"?`))) return
+    await executar(
+      u.login,
+      async () => {
+        if (funcao.papel !== u.papel || u.pendente || funcao.papel === 'vendedor') await definirPapel(u.login, funcao.papel, funcao.vendedor)
+        if (funcao.permissoes) await aplicarPermissoes(u.login, funcao.permissoes)
+        setEditando(null)
+      },
+      `${u.exibicao} agora é "${funcao.rotulo}"` + (funcao.permissoes ? ' — vale na próxima vez que ele abrir o site.' : '.'),
     )
   }
 
@@ -140,14 +187,15 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
     )
   }
 
-  const tipoEscolhido = tipos.find((t) => t.id === tipoNovo)
+  const funcaoEscolhida = escolhaDaFuncao(funcaoNova, tipos)
 
   return (
     <div className={embutido ? undefined : 'card'}>
       {!embutido && <h3 className="font-display text-base font-semibold text-ink-900 mb-1">Usuários</h3>}
       <p className="text-sm text-ink-400 mb-4">
-        Só você cadastra quem vai usar o site. Aqui também ficam a função e as permissões (abas, Tela Inicial e status) de cada um — os modelos
-        prontos ficam em Configurações › Tipos de usuário.
+        Só você cadastra quem vai usar o site. A função de cada um define o que ele acessa — se é administrador (vê prejuízo e
+        faturamento), as abas, a Tela Inicial e os status. As funções ficam em Configurações › Funções de usuário; pra ajustar
+        alguém só pra ele, use "Permissões" (ele fica como "Personalizada").
       </p>
 
       <form
@@ -169,30 +217,11 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
           />
         </label>
         <label>
-          <span className="field-label">Tipo</span>
-          <select className="field-input w-auto" aria-label="Tipo do novo usuário" value={tipoNovo} onChange={(e) => setTipoNovo(e.target.value)}>
-            <option value="">— sem tipo (escolher a função) —</option>
-            {tipos.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.nome}
-              </option>
-            ))}
+          <span className="field-label">Função</span>
+          <select className="field-input w-auto" aria-label="Função do novo usuário" value={funcaoNova} onChange={(e) => setFuncaoNova(e.target.value)}>
+            <OpcoesDeFuncao tipos={tipos} />
           </select>
         </label>
-        {!tipoEscolhido && (
-          <label>
-            <span className="field-label">Função</span>
-            <select
-              className="field-input w-auto"
-              aria-label="Função do novo usuário"
-              value={papelNovo}
-              onChange={(e) => setPapelNovo(e.target.value as PapelUsuario)}
-            >
-              <option value="admin">{ROTULO_PAPEL.admin}</option>
-              <option value="xadrez">{ROTULO_PAPEL.xadrez}</option>
-            </select>
-          </label>
-        )}
         <button
           type="submit"
           disabled={ocupado === '__novo__' || !nomeNovo.trim()}
@@ -201,9 +230,13 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
           Cadastrar
         </button>
         <p className="w-full text-xs text-ink-400">
-          {tipoEscolhido
-            ? `Tipo "${tipoEscolhido.nome}": ${ROTULO_PAPEL[tipoEscolhido.papel]}${tipoEscolhido.papel === 'admin' ? ` · ${resumoPermissoes(tipoEscolhido)}` : ''}. `
-            : ''}
+          {funcaoEscolhida?.permissoes
+            ? `"${funcaoEscolhida.rotulo}": ${resumoPermissoes(funcaoEscolhida.permissoes)}. `
+            : funcaoEscolhida?.papel === 'vendedor'
+              ? `"${funcaoEscolhida.rotulo}": registra cotações e acompanha só as que estão no nome de ${funcaoEscolhida.vendedor}; vê os valores depois que a cotação é enviada. `
+              : funcaoEscolhida
+                ? 'Sem função, a pessoa só vê a própria conta. '
+                : ''}
           A pessoa entra com esse nome e cria a própria senha (e o e-mail de recuperação) no primeiro acesso.
         </p>
       </form>
@@ -213,8 +246,8 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
       ) : (
         <div className="divide-y divide-ink-100">
           {usuarios.map((u) => {
-            const permissoes = permissoesDe(u.login)
-            const tipo = tipoDe(u)
+            const permissoes = permissoesDoUsuario(guardadas, u)
+            const funcao = funcaoDoUsuario(u.papel, permissoes, tipos, u.vendedor)
             const aberto = editando?.login === u.login ? editando : null
             return (
               <div key={u.login} className="py-3">
@@ -223,7 +256,6 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                     <p className="text-sm font-medium text-ink-900">
                       {u.exibicao}
                       {u.nome !== u.exibicao && <span className="font-normal text-ink-400"> · no app: {u.nome}</span>}
-                      {tipo && <span className="ml-2 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">{tipo.nome}</span>}
                       {u.pendente && (
                         <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">aguardando função</span>
                       )}
@@ -242,12 +274,11 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                       <select
                         className="field-input w-auto py-1.5 text-sm"
                         aria-label={`Função de ${u.exibicao}`}
-                        value={u.papel}
+                        value={funcao}
                         disabled={ocupado === u.login}
-                        onChange={(e) => void handlePapel(u, e.target.value as PapelUsuario)}
+                        onChange={(e) => void handleFuncao(u, e.target.value)}
                       >
-                        <option value="xadrez">{ROTULO_PAPEL.xadrez}</option>
-                        <option value="admin">{ROTULO_PAPEL.admin}</option>
+                        <OpcoesDeFuncao tipos={tipos} personalizada={funcao === 'personalizada'} vendedorAtual={u.vendedor || undefined} />
                       </select>
                       {u.papel === 'admin' && (
                         <button
@@ -296,30 +327,10 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
 
                 {aberto && (
                   <div className="mt-3 space-y-3 rounded-xl border border-ink-200 bg-ink-50/60 p-3" aria-label={`Permissões de ${u.exibicao}`}>
-                    {tipos.some((t) => t.papel === 'admin') && (
-                      <label className="flex flex-wrap items-center gap-2 text-sm text-ink-700">
-                        Copiar de um tipo:
-                        <select
-                          className="field-input w-auto py-1 text-sm"
-                          aria-label={`Copiar permissões de um tipo para ${u.exibicao}`}
-                          value=""
-                          onChange={(e) => {
-                            const t = tipos.find((x) => x.id === e.target.value)
-                            if (t) setEditando({ login: u.login, permissoes: { abas: t.abas, statusCotacoes: t.statusCotacoes, statusNotas: t.statusNotas, telaInicial: t.telaInicial ?? null } })
-                          }}
-                        >
-                          <option value="">— escolher —</option>
-                          {tipos
-                            .filter((t) => t.papel === 'admin')
-                            .map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.nome}
-                              </option>
-                            ))}
-                        </select>
-                        <span className="text-xs text-ink-400">(preenche as caixinhas — confira e salve)</span>
-                      </label>
-                    )}
+                    <p className="text-xs text-ink-400">
+                      Ajuste só pra {u.exibicao}: se não bater com nenhuma função, ele fica como "Personalizada" e não muda quando as
+                      funções mudarem.
+                    </p>
                     <EditorPermissoes valor={aberto.permissoes} onChange={(p) => setEditando({ login: u.login, permissoes: p })} />
                     <div className="flex flex-wrap gap-2">
                       <button

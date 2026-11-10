@@ -51,7 +51,7 @@ type SecaoConfig = keyof typeof ICONES_CONFIG
 
 /** As partes de cada um (ou deste aparelho) — aparecem mesmo pra quem não tem as Configurações gerais. */
 const SECOES_PESSOAIS: SecaoConfig[] = ['conta', 'saida', 'fundo']
-/** Só pro gestor (o Max): quem usa o site, os tipos de usuário, os status e a restauração de backup. */
+/** Só pro gestor (o Max): quem usa o site, as funções de usuário, os status e a restauração de backup. */
 const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'statusCotacoes', 'statusNotas', 'restaurarBackup']
 
 /** As partes da aba, na ordem dos símbolos (as mais usadas primeiro). */
@@ -59,7 +59,7 @@ const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNod
   { id: 'conta', titulo: 'Minha conta', resumo: 'Trocar a sua senha e o e-mail de recuperação', icone: ICONES_CONFIG.conta },
   { id: 'saida', titulo: 'Saída automática', resumo: 'Sair sozinho depois de um tempo sem uso', icone: ICONES_CONFIG.saida },
   { id: 'usuarios', titulo: 'Usuários', resumo: 'Cadastrar, função, permissões e nova senha', icone: ICONES_CONFIG.usuarios },
-  { id: 'tiposUsuario', titulo: 'Tipos de usuário', resumo: 'Modelos de função, abas e status pra reaproveitar', icone: ICONES_CONFIG.tiposUsuario },
+  { id: 'tiposUsuario', titulo: 'Funções de usuário', resumo: 'O que cada função acessa (e quem é administrador)', icone: ICONES_CONFIG.tiposUsuario },
   { id: 'statusCotacoes', titulo: 'Status das cotações', resumo: 'Nome, cor, ordem e status novos', icone: ICONES_CONFIG.statusCotacoes },
   { id: 'statusNotas', titulo: 'Status de frete e notas', resumo: 'Nome, cor, ordem e status novos', icone: ICONES_CONFIG.statusNotas },
   { id: 'formacao', titulo: 'Formação de preço', resumo: 'Imposto federal, comissão e custo fixo', icone: ICONES_CONFIG.formacao },

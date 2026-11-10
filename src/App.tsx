@@ -12,8 +12,10 @@ import { RecuperarRascunhoModal } from './components/RecuperarRascunhoModal'
 import { DialogHost } from './components/DialogHost'
 import { lerRascunho, limparRascunho, salvarRascunho, type RascunhoCotacao } from './rascunhoCotacao'
 import { calculateItem, definirTabelasCustomizadas } from './calc/calculator'
-import { mesmoFornecedor, valoresDaCotacaoDoFornecedor } from './utils'
-import { buscarQuote, listQuotes, saveQuote, setPlanilhaOriginal, updateQuoteStatus } from './db/analysesRepo'
+import { formatCurrency, formatDate, mesmoFornecedor, valoresDaCotacaoDoFornecedor } from './utils'
+import { atualizarValoresEnviados, buscarQuote, listQuotes, saveQuote, setPlanilhaOriginal, updateQuoteStatus } from './db/analysesRepo'
+import { totalAtualParaOVendedor, valoresMudaram } from './valoresEnviados'
+import { AvisoAlteracoesVendedor } from './components/AvisoAlteracoesVendedor'
 import { lerPlanilhaCliente } from './db/planilhasClienteRepo'
 import { observacoesPorReferencia, sincronizarProdutos } from './db/produtosRepo'
 import {
@@ -74,13 +76,15 @@ const HistoryPage = lazy(() => import('./pages/HistoryPage').then((m) => ({ defa
 const PlanilhaClienteModal = lazy(() =>
   import('./components/PlanilhaClienteModal').then((m) => ({ default: m.PlanilhaClienteModal })),
 )
+// o site do vendedor (só as cotações dele) — quem é administrador nunca baixa
+const AppVendedor = lazy(() => import('./vendedor/AppVendedor').then((m) => ({ default: m.AppVendedor })))
 
 function CarregandoAba() {
   return <p className="py-16 text-center text-sm text-ink-400">Carregando…</p>
 }
 
-/** Entrada do app: sem usuário logado, a tela de login; com usuário, o site todo (administrador) ou
- * só a Tela Inicial (quem se cadastrou e ainda não ganhou outra função do Max). */
+/** Entrada do app: sem usuário logado, a tela de login; com usuário, o site todo (administrador), as
+ * cotações dele (vendedor) ou só a própria conta (quem se cadastrou e ainda não ganhou função do Max). */
 export default function App() {
   const sessao = useSessao()
 
@@ -101,7 +105,11 @@ export default function App() {
   }
   return (
     <>
-      {sessao.usuario.papel !== 'admin' ? (
+      {sessao.usuario.papel === 'vendedor' ? (
+        <Suspense fallback={<CarregandoAba />}>
+          <AppVendedor key={sessao.usuario.login} usuario={sessao.usuario} />
+        </Suspense>
+      ) : sessao.usuario.papel !== 'admin' ? (
         <AreaSemFuncao usuario={sessao.usuario} />
       ) : (
         // key: outro usuário entrando começa do zero (abas, cotação aberta...)
@@ -684,6 +692,26 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
   }, [items, itensExcluidosPendentes, itensExcluidosSalvos])
 
   /** Salva a cotação aberta — true se gravou (usado por quem precisa saber, ex.: "Salvar e fechar"). */
+  /** Os valores salvos ficaram diferentes dos que o vendedor vê (ver valoresEnviados.ts): pergunta se
+   * troca — sem confirmação, ele continua vendo os que foram enviados. */
+  async function perguntarSeAtualizaOVendedor(record: QuoteRecord) {
+    if (!record.vendedor || !record.valoresEnviados || !valoresMudaram(record)) return
+    const enviados = record.valoresEnviados
+    const trocar = await confirmar(
+      `O vendedor ${record.vendedor} está vendo os valores enviados em ${formatDate(enviados.atualizadoEm ?? enviados.enviadoEm)} ` +
+        `(total ${formatCurrency(enviados.total)}). Os desta cotação agora somam ${formatCurrency(totalAtualParaOVendedor(record.items))}.\n\n` +
+        'Atualizar os valores que o vendedor vê?',
+      { titulo: 'Valores do vendedor', confirmText: 'Atualizar para o vendedor', cancelText: 'Manter os enviados' },
+    )
+    if (!trocar) return
+    try {
+      await atualizarValoresEnviados(record.id, currentAdmin)
+      void avisar(`Pronto: o vendedor ${record.vendedor} já vê os valores novos.`)
+    } catch (err) {
+      void avisar(err instanceof Error ? err.message : 'Erro ao atualizar os valores do vendedor.')
+    }
+  }
+
   async function handleSave(): Promise<boolean> {
     if (!currentAdmin) return false
     try {
@@ -713,6 +741,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
       setTemAlteracoesNaoSalvas(false)
       setCotacaoRecemSalva(true)
       setTimeout(() => setCotacaoRecemSalva(false), 2500)
+      await perguntarSeAtualizaOVendedor(record)
       return true
     } catch (err) {
       await avisar(err instanceof Error ? err.message : 'Erro ao salvar a cotação no servidor.')
@@ -874,6 +903,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
           onContinuar={() => changeTab('dashboard')}
           onIrPara={changeTab}
           podeVer={podeVer}
+          veFinanceiro={permissoes.veFinanceiro}
           partes={partesTelaInicial}
           onAbrirPedido={(cotacaoId) => {
             setPedidoParaAbrir((anterior) => ({ cotacaoId, vez: (anterior?.vez ?? 0) + 1 }))
@@ -894,7 +924,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
           abrirNova={abrirNovaCotacao}
         />
       )}
-      {tab === 'analytics' && <AnalyticsPage />}
+      {tab === 'analytics' && <AnalyticsPage veFinanceiro={permissoes.veFinanceiro} />}
       {tab === 'comparar' && (
         <CompararFornecedoresPage
           currentAdmin={currentAdmin}
@@ -955,7 +985,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
         />
         </div>
       )}
-      {tab === 'faturamento' && <FaturamentoPage currentAdmin={currentAdmin} />}
+      {tab === 'faturamento' && podeVer('faturamento') && <FaturamentoPage currentAdmin={currentAdmin} />}
       {tab === 'relatorios' && podeVer('relatorios') && <RelatoriosPage currentAdmin={currentAdmin} />}
       {tab === 'produtos' && <ProdutosPage currentAdmin={currentAdmin} />}
       {tab === 'fornecedores' && <FornecedoresPage />}
@@ -973,10 +1003,10 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
         />
       )}
       {tab === 'acompanhamentoNotas' && podeVer('acompanhamentoNotas') && (
-        <AcompanhamentoNotasPage currentAdmin={currentAdmin} />
+        <AcompanhamentoNotasPage currentAdmin={currentAdmin} veFinanceiro={permissoes.veFinanceiro} />
       )}
       {tab === 'notasFiscais' && podeVer('notasFiscais') && <NotasFiscaisPage currentAdmin={currentAdmin} />}
-      {tab === 'notasFiscaisDashboard' && podeVer('notasFiscaisDashboard') && <NotasFiscaisDashboardPage />}
+      {tab === 'notasFiscaisDashboard' && podeVer('notasFiscaisDashboard') && <NotasFiscaisDashboardPage veFinanceiro={permissoes.veFinanceiro} />}
       {tab === 'history' && (
         <HistoryPage refreshKey={historyRefreshKey} currentAdmin={currentAdmin} onLoad={handleLoad} />
       )}
@@ -1003,6 +1033,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
         />
       )}
 
+      {podeVer('cotacoes') && <AvisoAlteracoesVendedor nome={currentAdmin} onAbrir={handleLoad} />}
       <AvisoEntregas
         aba={tab}
         onAbrir={(cotacaoId) => {

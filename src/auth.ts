@@ -58,6 +58,8 @@ export interface UsuarioCadastrado {
   exibicao: string
   nome: string
   papel: PapelUsuario
+  /** Do vendedor: de qual vendedor são as cotações dele (vazio pros outros, e nos servidores antigos). */
+  vendedor?: string
   gestor: boolean
   pendente: boolean
   /** MÁXIMUS, GOUVÊA e MAICON — não podem ser excluídos. */
@@ -71,8 +73,9 @@ export function listarUsuarios(): Promise<UsuarioCadastrado[]> {
   return chamarServidor('/_auth/usuarios')
 }
 
-export function definirPapel(login: string, papel: PapelUsuario): Promise<void> {
-  return chamarServidor(`/_auth/usuarios/${encodeURIComponent(login)}`, { method: 'PUT', corpo: { papel } })
+/** `vendedor`: só pra função 'vendedor' — de qual vendedor são as cotações dele. */
+export function definirPapel(login: string, papel: PapelUsuario, vendedor?: string): Promise<void> {
+  return chamarServidor(`/_auth/usuarios/${encodeURIComponent(login)}`, { method: 'PUT', corpo: { papel, ...(vendedor ? { vendedor } : {}) } })
 }
 
 /** Apaga a senha do usuário — ele cria outra no próximo acesso (pra quem esqueceu e não tem o e-mail). */
@@ -81,8 +84,8 @@ export function liberarNovaSenha(login: string): Promise<void> {
 }
 
 /** O Max cadastra alguém (sem senha: a pessoa cria a dela no primeiro acesso). */
-export function cadastrarUsuario(usuario: string, papel: PapelUsuario): Promise<{ login: string; exibicao: string }> {
-  return chamarServidor('/_auth/usuarios', { method: 'POST', corpo: { usuario, papel } })
+export function cadastrarUsuario(usuario: string, papel: PapelUsuario, vendedor?: string): Promise<{ login: string; exibicao: string }> {
+  return chamarServidor('/_auth/usuarios', { method: 'POST', corpo: { usuario, papel, ...(vendedor ? { vendedor } : {}) } })
 }
 
 export function excluirUsuario(login: string): Promise<void> {

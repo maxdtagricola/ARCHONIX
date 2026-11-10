@@ -536,6 +536,41 @@ export interface MedidasCargaFrete {
   pesoKg: number
 }
 
+/** Um item como foi pro vendedor — as mesmas colunas da planilha do cliente (ver planilhaClientePadrao). */
+export interface ItemValorEnviado {
+  marca: string
+  entrega: string
+  referencia: string
+  descricao: string
+  quantidade: number
+  valorUnitario: number
+  valorTotal: number
+}
+
+export interface ValoresEnviados {
+  itens: ItemValorEnviado[]
+  total: number
+  /** Quando foi pra ENVIADO (a primeira vez que o vendedor passou a ver valores) e quem mandou. */
+  enviadoEm: number
+  enviadoPor: string
+  /** A última vez que quem cota confirmou trocar os valores — sem isso, são os do envio. */
+  atualizadoEm?: number
+  atualizadoPor?: string
+}
+
+/** Uma alteração do vendedor: o que mudou, campo por campo (texto pronto do servidor). */
+export interface AlteracaoVendedor {
+  id: string
+  em: number
+  /** Nome do vendedor no app (quem alterou). */
+  por: string
+  campos: { campo: string; antes: string; depois: string }[]
+  /** Quem estava com a cotação na hora — é quem recebe o aviso; vazio = ninguém (todos veem). */
+  para?: string
+  /** Quem já viu o aviso (nomes no app). */
+  vistaPor?: string[]
+}
+
 export interface QuoteRecord {
   id: string
   /** Código sequencial (ex.: "COT-0001") pra facilitar o acompanhamento — registros antigos podem não ter. */
@@ -596,6 +631,11 @@ export interface QuoteRecord {
   dataFaturamento?: string
   /** Itens que já saíram dessa cotação — guardados aqui pra nunca sumirem do sistema. */
   itensExcluidos?: ItemExcluidoCotacao[]
+  /** O que o vendedor vê de valores (ver valoresEnviados.ts): fica como estava ao ir pra ENVIADO, e só
+   * muda quando quem cota confirma — o que mudar depois (no Pedido de Compra, por exemplo) não mexe. */
+  valoresEnviados?: ValoresEnviados
+  /** O que o vendedor alterou na cotação dele (gravado pelo servidor), pra quem cota ser avisado. */
+  alteracoesVendedor?: AlteracaoVendedor[]
   createdAt: number
   updatedAt: number
   // resumo pré-calculado para exibição rápida na lista do histórico

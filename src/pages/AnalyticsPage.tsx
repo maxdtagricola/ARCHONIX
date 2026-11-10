@@ -32,7 +32,8 @@ function ultimosMeses(n: number, ate?: string): { inicio: number; fim: number; l
   return meses
 }
 
-export function AnalyticsPage() {
+/** `veFinanceiro`: o valor faturado só aparece pra administrador (ver financeiroPorUsuario.ts). */
+export function AnalyticsPage({ veFinanceiro }: { veFinanceiro: boolean }) {
   const [records, setRecords] = useState<QuoteRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [periodo, setPeriodo] = useState<Periodo>('mes')
@@ -130,7 +131,7 @@ export function AnalyticsPage() {
           </p>
         </div>
         {!loading && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full sm:w-auto">
+          <div className={`grid grid-cols-1 ${veFinanceiro ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3 w-full sm:w-auto`}>
             <KpiCard
               icon={<IconDocumento />}
               value={String(filtrados.length)}
@@ -138,7 +139,7 @@ export function AnalyticsPage() {
               tone="agua"
             />
             <KpiCard icon={<IconTendencia />} value={formatCurrency(valorTotalGeral)} label="Valor total das cotações" tone="amarelo" />
-            <KpiCard icon={<IconCheck />} value={formatCurrency(valorFechado)} label="Valor faturado" tone="laranja" />
+            {veFinanceiro && <KpiCard icon={<IconCheck />} value={formatCurrency(valorFechado)} label="Valor faturado" tone="laranja" />}
           </div>
         )}
       </div>
@@ -205,13 +206,14 @@ export function AnalyticsPage() {
               />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className={`grid grid-cols-1 ${veFinanceiro ? 'lg:grid-cols-2' : ''} gap-6`}>
               <div className="card">
                 <h3 className="font-display text-base font-semibold text-ink-900 mb-1">Valor por vendedor</h3>
                 <p className="text-xs text-ink-400 mb-4">{mesReferencia ? 'No mês selecionado.' : 'No período selecionado.'}</p>
                 <BarChart data={vendedorData} valueFormatter={formatCurrency} color="#2a78d6" emptyText="Nenhuma cotação com vendedor definido nesse período." />
               </div>
 
+              {veFinanceiro && (
               <div className="card flex flex-col justify-center">
                 <p className="text-sm text-ink-400 mb-1">{mesReferencia ? 'Valor faturado no mês' : 'Valor faturado no período'}</p>
                 <p className="font-display text-4xl font-bold text-ink-900 tabular-nums">{formatCurrency(valorFechado)}</p>
@@ -222,6 +224,7 @@ export function AnalyticsPage() {
                   </p>
                 </div>
               </div>
+              )}
             </div>
           </div>
         </div>
