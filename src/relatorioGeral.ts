@@ -53,7 +53,7 @@ export function etapaDaCotacao(cotacao: QuoteRecord): EtapaRelatorio {
   return 'faturada'
 }
 
-function dataDoFaturamento(cotacao: QuoteRecord): number | undefined {
+export function dataDoFaturamento(cotacao: QuoteRecord): number | undefined {
   const informada = cotacao.dataFaturamento ? new Date(`${cotacao.dataFaturamento}T12:00:00`).getTime() : NaN
   if (!Number.isNaN(informada)) return informada
   const registros = Object.values(cotacao.itensFaturados ?? {}).map((f) => f.registradoEm)

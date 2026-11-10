@@ -32,6 +32,7 @@ import { listNotasFiscais } from '../db/notasFiscaisRepo'
 import { listNotasFiscaisGerais } from '../db/notasFiscaisGeraisRepo'
 import type { TipoStatus } from '../statusConfig'
 import { FeriadosCard } from '../components/FeriadosCard'
+import { RestaurarBackupCard } from '../components/RestaurarBackupCard'
 import { useSessao } from '../sessaoUsuario'
 import { MinhaContaForm } from '../components/MinhaContaModal'
 import { ICONES_CONFIG } from '../components/IconesConfiguracoes'
@@ -50,8 +51,8 @@ type SecaoConfig = keyof typeof ICONES_CONFIG
 
 /** As partes de cada um (ou deste aparelho) — aparecem mesmo pra quem não tem as Configurações gerais. */
 const SECOES_PESSOAIS: SecaoConfig[] = ['conta', 'saida', 'fundo']
-/** Só pro gestor (o Max): quem usa o site, os tipos de usuário e os status. */
-const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'statusCotacoes', 'statusNotas']
+/** Só pro gestor (o Max): quem usa o site, os tipos de usuário, os status e a restauração de backup. */
+const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'statusCotacoes', 'statusNotas', 'restaurarBackup']
 
 /** As partes da aba, na ordem dos símbolos (as mais usadas primeiro). */
 const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNode }[] = [
@@ -65,6 +66,7 @@ const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNod
   { id: 'empresas', titulo: 'Empresas', resumo: 'Empresas do grupo que recebem os materiais', icone: ICONES_CONFIG.empresas },
   { id: 'importarMarkup', titulo: 'Importar planilha de markup', resumo: 'Nova versão das tabelas RBC e ICMS-ST', icone: ICONES_CONFIG.importarMarkup },
   { id: 'planilhas', titulo: 'Planilhas importadas', resumo: 'Histórico, baixar ou voltar a usar uma anterior', icone: ICONES_CONFIG.planilhas },
+  { id: 'restaurarBackup', titulo: 'Restaurar de um backup', resumo: 'Notas, cotações, produtos e mais que sumiram', icone: ICONES_CONFIG.restaurarBackup },
   { id: 'feriados', titulo: 'Feriados', resumo: 'Estaduais e municipais, pros dias úteis', icone: ICONES_CONFIG.feriados },
   { id: 'fundo', titulo: 'Vídeo de fundo', resumo: 'Animar ou pausar o samurai ao fundo', icone: ICONES_CONFIG.fundo },
 ]
@@ -399,6 +401,8 @@ export function ConfiguracoesPage({
         )
       case 'usuarios':
         return <UsuariosCard embutido />
+      case 'restaurarBackup':
+        return <RestaurarBackupCard />
       case 'feriados':
         return <FeriadosCard embutido />
       case 'fundo':

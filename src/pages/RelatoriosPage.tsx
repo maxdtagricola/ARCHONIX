@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ControleFaturamentoRelatorio } from '../components/ControleFaturamentoRelatorio'
 import { SeletorMesReferencia, intervaloDoMes, mesesDisponiveis } from '../components/SeletorMesReferencia'
 import { Button } from '../components/ui/Basics'
 import { listQuotes } from '../db/analysesRepo'
 import { avisar } from '../dialogs'
+import { useEstadoPersistente } from '../estadoPersistente'
 import { chaveMes, labelDoMes } from '../notasFiscaisHelpers'
 import { PERIODOS, inicioPeriodo, type Periodo } from '../periodo'
 import {
@@ -20,9 +22,10 @@ import { ADMINS, type QuoteRecord } from '../types'
 import { formatCurrency } from '../utils'
 
 // -----------------------------------------------------------------------
-// Relatórios — o admin escolhe o período e de quem (só as dele, ou as dos
-// admins marcados), vê o resultado na tela e gera em PDF ou Excel pra passar
-// aos supervisores. As contas ficam em relatorioGeral.ts; os arquivos, em
+// Relatórios — dois: o geral, em que o admin escolhe o período e de quem (só
+// as dele, ou as dos admins marcados), vê o resultado na tela e gera em PDF
+// ou Excel pra passar aos supervisores; e o Controle de Cotações x
+// Faturamento, no formato da planilha da empresa (ControleFaturamentoRelatorio). As contas ficam em relatorioGeral.ts; os arquivos, em
 // relatorioArquivos.ts (carregado só ao gerar: PDF e Excel são pesados).
 // -----------------------------------------------------------------------
 
@@ -101,6 +104,7 @@ export function RelatoriosPage({ currentAdmin }: { currentAdmin: string }) {
   const [admins, setAdmins] = useState<string[]>([currentAdmin])
   const [etapaFiltro, setEtapaFiltro] = useState<EtapaRelatorio | ''>('')
   const [gerando, setGerando] = useState<'pdf' | 'excel' | null>(null)
+  const [qual, setQual] = useEstadoPersistente<'geral' | 'controle'>('relatorios:qual', 'geral')
   useVersaoStatus()
 
   useEffect(() => {
@@ -147,8 +151,39 @@ export function RelatoriosPage({ currentAdmin }: { currentAdmin: string }) {
 
   const semCotacoes = relatorio.linhas.length === 0
 
+  const escolha = (
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Qual relatório">
+      {(
+        [
+          ['geral', 'Relatório geral'],
+          ['controle', 'Controle de Cotações x Faturamento'],
+        ] as const
+      ).map(([id, nome]) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={qual === id}
+          onClick={() => setQual(id)}
+          className={`pill-tab border ${qual === id ? 'bg-ink-950 border-ink-950 text-white' : 'border-ink-200 bg-surface text-ink-600 hover:bg-ink-50'}`}
+        >
+          {nome}
+        </button>
+      ))}
+    </div>
+  )
+
+  if (qual === 'controle') {
+    return (
+      <div className="space-y-5">
+        {escolha}
+        <ControleFaturamentoRelatorio cotacoes={cotacoes} carregando={carregando} />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-5">
+      {escolha}
       <div className="card">
         <h2 className="font-display text-lg font-semibold text-ink-900 mb-1">Relatórios</h2>
         <p className="text-sm text-ink-400 mb-4">

@@ -48,6 +48,15 @@ export const ICONES_CONFIG = {
       <path d="M17.5 14.3c2 .4 3.2 1.9 3.6 4" />
     </Icone>
   ),
+  // documento com a seta de voltar (trazer de volta de um backup)
+  restaurarBackup: (
+    <Icone>
+      <path d="M14 3.5H6.5a1 1 0 0 0-1 1v15a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V8z" />
+      <path d="M14 3.5V8h4.5" />
+      <path d="M9 15.5a3.2 3.2 0 1 0 1-2.4" />
+      <path d="M9.2 11.4v2h2" />
+    </Icone>
+  ),
   // calendário com o dia marcado
   feriados: (
     <Icone>

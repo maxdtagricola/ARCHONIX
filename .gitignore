@@ -49,3 +49,8 @@ scripts/blender/*.fbx
 !scripts/blender/sheath sword 1.fbx
 !scripts/blender/sheath sword 2.fbx
 scripts/blender/__pycache__/
+
+# copias de seguranca com dados reais da empresa — nunca versionar
+dados-restaurado*.json
+*-restaurado*.json
+notas-recuperadas*.json
