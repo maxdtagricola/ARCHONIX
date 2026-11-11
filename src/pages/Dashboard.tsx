@@ -81,6 +81,7 @@ export function Dashboard({
   onGoToComparar,
   onGoToFrete,
   onEnviarCotacao,
+  onEnviarAoVendedor,
   planilhaCliente,
   onVerPlanilhaCliente,
   createdAt,
@@ -127,6 +128,8 @@ export function Dashboard({
   onGoToComparar: () => void
   onGoToFrete: () => void
   onEnviarCotacao: () => Promise<void>
+  /** Manda a cotação pro vendedor ver na tela dele (true se mandou). */
+  onEnviarAoVendedor: () => Promise<boolean>
   /** A planilha que veio do cliente, se a cotação foi importada de uma — sem ela, gera no molde padrão. */
   planilhaCliente?: { nomeArquivo: string; carregar: () => Promise<PlanilhaClienteArquivo | undefined> }
   onVerPlanilhaCliente: () => void
@@ -339,6 +342,14 @@ export function Dashboard({
               await onEnviarCotacao()
               setMostrarEnvioCotacao(false)
             }}
+            // só pros vendedores que têm a tela deles no site
+            onEnviarAoVendedor={
+              VENDEDORES.includes(vendedor) && isEditing
+                ? async () => {
+                    if (await onEnviarAoVendedor()) setMostrarEnvioCotacao(false)
+                  }
+                : undefined
+            }
           />
         </Suspense>
       )}

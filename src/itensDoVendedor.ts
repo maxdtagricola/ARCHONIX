@@ -1,4 +1,4 @@
-import { statusDe } from './statusConfig'
+import { statusAntesDe } from './statusConfig'
 import type { ItemPedidoVendedor, QuoteItem, QuoteRecord } from './types'
 
 // Os itens que o vendedor pede e altera (ver "vendedores" no server.js) entram na Precificação quando
@@ -22,9 +22,7 @@ const nomeDoItem = (p: { interno: string; referencia: string; descricao?: string
 
 /** O status ainda é de antes do PEDIDO DE COMPRA (na ordem do fluxo configurada)? */
 export function antesDoPedidoDeCompra(status: string): boolean {
-  const ordem = statusDe('cotacoes')
-  const posicao = ordem.indexOf(status)
-  return posicao === -1 || posicao < ordem.indexOf('PEDIDO DE COMPRA')
+  return statusAntesDe(status, 'PEDIDO DE COMPRA')
 }
 
 export interface ItensDoVendedorAplicados {

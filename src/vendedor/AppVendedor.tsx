@@ -3,9 +3,10 @@ import { dbGet } from '../db/db'
 import { sair } from '../auth'
 import { DialogHost } from '../components/DialogHost'
 import { MinhaContaModal } from '../components/MinhaContaModal'
+import { guardarMinutosDoVendedor } from '../components/SaidaAutomatica'
 import { getStatusColors } from '../db/configRepo'
 import { avisar } from '../dialogs'
-import { carregarStatusConfig, nomeDoStatus, ordemComExtras, statusDe, useVersaoStatus } from '../statusConfig'
+import { caminhoSemVoltas, carregarStatusConfig, nomeDoStatus, ordemComExtras, statusDe, useVersaoStatus } from '../statusConfig'
 import { corPadraoDoStatus, corTexto } from '../statusColors'
 import { formatCurrency, formatDate, makeId } from '../utils'
 import type { UsuarioLogado } from '../sessaoUsuario'
@@ -60,6 +61,25 @@ async function baixarPlanilhaOriginal(idCotacao: string, nomeArquivo: string) {
 }
 
 const INTERVALO_BUSCA_MS = 5 * 60 * 1000
+
+// "valores novos": a versão dos valores de cada cotação que ele já abriu, guardada no aparelho
+const chaveDosVistos = (login: string) => `vendedor:valoresVistos:${login}`
+const versaoDosValores = (v?: ValoresParaOVendedor) => (v ? (v.versao ?? `${v.total}|${v.atualizada ? 1 : 0}`) : '')
+function lerVistos(login: string): Record<string, string> | null {
+  try {
+    const texto = localStorage.getItem(chaveDosVistos(login))
+    return texto ? (JSON.parse(texto) as Record<string, string>) : null
+  } catch {
+    return null
+  }
+}
+function gravarVistos(login: string, vistos: Record<string, string>) {
+  try {
+    localStorage.setItem(chaveDosVistos(login), JSON.stringify(vistos))
+  } catch {
+    // sem armazenamento: o aviso volta na próxima vez, nada de mais
+  }
+}
 
 const textoBusca = (t: string) =>
   t
@@ -129,6 +149,7 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
   useVersaoStatus()
   const config = previa?.config ?? configSalva
   const vendedor = previa?.vendedor ?? usuario.vendedor ?? ''
+  const ehPrevia = !!previa
 
   const recarregar = useCallback(async () => {
     try {
@@ -152,9 +173,14 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
     getStatusColors()
       .then(setCores)
       .catch(() => {})
-    // servidor de antes desta configuração: recusa ler — fica o padrão (tudo aparece)
-    getConfigTelaVendedor()
-      .then(setConfigSalva)
+    // a dele (Usuários › Permissões) ou a de todos; servidor de antes desta configuração: recusa ler —
+    // fica o padrão (pode tudo, aparece tudo)
+    getConfigTelaVendedor(vendedor)
+      .then((c) => {
+        setConfigSalva(c)
+        // o tempo da saída automática dele (na visualização do Max, não mexe no do Max)
+        if (!ehPrevia) guardarMinutosDoVendedor(c.minutosSaida)
+      })
       .catch(() => {})
     const intervalo = window.setInterval(() => void recarregar(), INTERVALO_BUSCA_MS)
     const aoFocar = () => void recarregar()
@@ -163,7 +189,26 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
       window.clearInterval(intervalo)
       window.removeEventListener('focus', aoFocar)
     }
-  }, [recarregar])
+  }, [recarregar, vendedor, ehPrevia])
+
+  // na primeira vez neste aparelho, o que já estava lá não conta como novo
+  const [vistos, setVistos] = useState<Record<string, string> | null>(() => (previa ? {} : lerVistos(usuario.login)))
+  useEffect(() => {
+    if (previa || vistos !== null || cotacoes === null) return
+    const iniciais = Object.fromEntries(cotacoes.filter((c) => c.valoresEnviados).map((c) => [c.id, versaoDosValores(c.valoresEnviados)]))
+    gravarVistos(usuario.login, iniciais)
+    setVistos(iniciais)
+  }, [previa, vistos, cotacoes, usuario.login])
+  const comValoresNovos = useMemo(
+    () => (previa || !vistos ? [] : (cotacoes ?? []).filter((c) => c.valoresEnviados && vistos[c.id] !== versaoDosValores(c.valoresEnviados))),
+    [previa, vistos, cotacoes],
+  )
+  function marcarVisto(c: CotacaoDoVendedor) {
+    if (previa || !vistos || !c.valoresEnviados || vistos[c.id] === versaoDosValores(c.valoresEnviados)) return
+    const novos = { ...vistos, [c.id]: versaoDosValores(c.valoresEnviados) }
+    gravarVistos(usuario.login, novos)
+    setVistos(novos)
+  }
 
   const corDoStatus = (status: string) => cores[status] || corPadraoDoStatus(status, statusDe('cotacoes'))
 
@@ -206,6 +251,13 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
             {config.mensagem.trim()}
           </p>
         )}
+        {comValoresNovos.length > 0 && (
+          <p role="status" aria-label="Valores novos" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            {comValoresNovos.length === 1 ? 'Chegaram os valores da ' : 'Chegaram valores da equipe: '}
+            <span className="font-semibold">{comValoresNovos.map((c) => c.codigo).join(', ')}</span>
+            {comValoresNovos.length === 1 ? '.' : ''} Abra a cotação pra ver os itens com marca, prazo e valores, a planilha e o texto pro cliente.
+          </p>
+        )}
         {novaAberta ? (
           <FormularioCotacao
             formas={config.importar}
@@ -219,15 +271,18 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
           />
         ) : (
           <div className="flex flex-wrap items-end gap-3">
-            <button
-              type="button"
-              disabled={!!editandoId}
-              title={editandoId ? 'Salve ou cancele a alteração aberta antes' : undefined}
-              onClick={() => setNovaAberta(true)}
-              className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-semibold text-surface transition hover:opacity-90 disabled:opacity-50"
-            >
-              + Nova cotação
-            </button>
+            {/* registrar cotação nova: só se o Max liberou (o servidor também confere) */}
+            {config.pode.registrar && (
+              <button
+                type="button"
+                disabled={!!editandoId}
+                title={editandoId ? 'Salve ou cancele a alteração aberta antes' : undefined}
+                onClick={() => setNovaAberta(true)}
+                className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-semibold text-surface transition hover:opacity-90 disabled:opacity-50"
+              >
+                + Nova cotação
+              </button>
+            )}
             <label className="min-w-[12rem] flex-1">
               <span className="field-label">Buscar</span>
               <input
@@ -256,7 +311,11 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
           <p className="py-10 text-center text-sm text-ink-400">Carregando…</p>
         ) : filtradas.length === 0 ? (
           <p className="card py-10 text-center text-sm text-ink-400">
-            {cotacoes.length === 0 ? 'Nenhuma cotação no seu nome ainda. Clique em "+ Nova cotação" pra registrar a primeira.' : 'Nenhuma cotação com esse filtro.'}
+            {cotacoes.length > 0
+              ? 'Nenhuma cotação com esse filtro.'
+              : config.pode.registrar
+                ? 'Nenhuma cotação no seu nome ainda. Clique em "+ Nova cotação" pra registrar a primeira.'
+                : 'Nenhuma cotação no seu nome ainda.'}
           </p>
         ) : (
           <div className="space-y-2" aria-label="Lista das minhas cotações">
@@ -267,6 +326,9 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
                 cor={corDoStatus(c.status)}
                 corDoStatus={corDoStatus}
                 partes={config.partes}
+                liberadoAlterar={config.pode.alterar}
+                novo={comValoresNovos.includes(c)}
+                onAbrir={() => marcarVisto(c)}
                 onEditar={editandoId || novaAberta ? undefined : () => setEditandoId(c.id)}
                 formulario={
                   editandoId === c.id ? (
@@ -310,6 +372,9 @@ function CartaoCotacao({
   cor,
   corDoStatus,
   partes,
+  liberadoAlterar = true,
+  novo = false,
+  onAbrir,
   onEditar,
   formulario,
 }: {
@@ -318,6 +383,12 @@ function CartaoCotacao({
   corDoStatus: (status: string) => string
   /** O que o Max escolheu mostrar (telaVendedor.ts). */
   partes: Record<ParteDaTelaVendedor, boolean>
+  /** O Max deixa ele alterar as cotações (telaVendedor.ts, `pode.alterar`). */
+  liberadoAlterar?: boolean
+  /** Chegaram valores (novos) que ele ainda não abriu. */
+  novo?: boolean
+  /** Abriu o cartão (os valores contam como vistos). */
+  onAbrir?: () => void
   onEditar?: () => void
   /** Sendo alterada: o formulário aparece aqui, no lugar dos detalhes. */
   formulario?: ReactNode
@@ -327,8 +398,9 @@ function CartaoCotacao({
   const [janela, setJanela] = useState<{ formato?: FormatoDaCotacao } | null>(null)
   const v = partes.valores ? c.valoresEnviados : undefined
   const anexos = c.anexosVendedor ?? []
-  // status repetidos em seguida (ida e volta registrada duas vezes) aparecem uma vez só
-  const andamento = c.statusHistory.map((h) => h.status).filter((s, i, todos) => i === 0 || s !== todos[i - 1])
+  // só pra frente: as voltas (de ANALISANDO VALORES pra AGUARDANDO FORNECEDOR, por exemplo) não aparecem
+  // pra ele — o servidor já manda assim; aqui vale pros servidores de antes
+  const andamento = caminhoSemVoltas([...c.statusHistory.map((h) => h.status), c.status])
   const itensPedidos = itensDaLista(c)
   const mudouDepois = !!v && partes.itens && mudouDepoisDoEnvio(itensPedidos, v)
   const producao = [...new Set(c.previsoesDeProducao)].sort()
@@ -339,7 +411,11 @@ function CartaoCotacao({
     <article className="card !p-0" aria-label={`Cotação ${c.codigo}`}>
       <button
         type="button"
-        onClick={() => !formulario && setAberto((a) => !a)}
+        onClick={() => {
+          if (formulario) return
+          setAberto((a) => !a)
+          onAbrir?.()
+        }}
         aria-expanded={aberto}
         className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left"
       >
@@ -351,6 +427,7 @@ function CartaoCotacao({
           {c.cliente || '(sem cliente)'}
           {c.maquina && <span className="font-normal text-ink-500"> · {c.maquina}</span>}
         </span>
+        {novo && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">valores novos</span>}
         <SeloStatus status={c.status} cor={cor} />
         <span className="text-xs text-ink-400">
           {partes.quemCota && c.status !== 'PENDENTE' && c.responsavelStatus ? `com ${c.responsavelStatus} · ` : ''}
@@ -566,7 +643,9 @@ function CartaoCotacao({
           )}
 
           {/* do PEDIDO DE COMPRA em diante, só a equipe mexe (o servidor também recusa) */}
-          {!podeAlterar(c) ? (
+          {!liberadoAlterar ? (
+            <p className="text-xs text-ink-500">🔒 Alterar as cotações não está liberado pra você. Se precisar mudar algo, fale com quem está cotando.</p>
+          ) : !podeAlterar(c) ? (
             <p className="text-xs text-ink-500">🔒 A cotação já chegou ao Pedido de Compra: daqui em diante não dá mais pra alterar. Fale com quem está cotando.</p>
           ) : (
             onEditar && (

@@ -22,6 +22,17 @@ import {
   type TipoUsuario,
 } from '../tiposUsuario'
 import type { PapelUsuario } from '../sessaoUsuario'
+import { EditorTelaVendedor } from '../vendedor/EditorTelaVendedor'
+import { getConfigDosVendedores, salvarConfigTelaVendedor, type ConfigDosVendedores, type ConfigTelaVendedor } from '../vendedor/telaVendedor'
+
+/** "pode registrar e alterar · 6 de 7 partes da tela · 3 de 4 formas de importar" */
+export function resumoDoVendedor(c: ConfigTelaVendedor): string {
+  const pode = c.pode.registrar && c.pode.alterar ? 'registra e altera' : c.pode.registrar ? 'registra, não altera' : c.pode.alterar ? 'altera, não registra' : 'só acompanha'
+  const partes = Object.values(c.partes).filter(Boolean).length
+  const formas = Object.values(c.importar).filter(Boolean).length
+  const saida = c.minutosSaida === null ? '' : c.minutosSaida === 0 ? ' · não sai sozinho' : ` · sai depois de ${c.minutosSaida} min sem uso`
+  return `${pode}${saida} · ${partes} de ${Object.keys(c.partes).length} partes da tela · ${formas} de ${Object.keys(c.importar).length} formas de importar`
+}
 
 export const ROTULO_PAPEL: Record<PapelUsuario, string> = {
   xadrez: 'Sem função definida',
@@ -51,12 +62,32 @@ export function TiposUsuarioCard() {
   const [carregando, setCarregando] = useState(true)
   const [editando, setEditando] = useState<TipoUsuario | null>(null)
   const [salvando, setSalvando] = useState(false)
+  const [vendedores, setVendedores] = useState<ConfigDosVendedores | null>(null)
+  // a função Vendedor sendo editada (vale pra todos, menos quem tem permissões só dele)
+  const [editandoVendedor, setEditandoVendedor] = useState<ConfigTelaVendedor | null>(null)
 
   async function recarregar() {
     const [lista, todos, g] = await Promise.all([getTiposUsuario(), listarUsuarios(), carregarPermissoesGuardadas()])
     setTipos(lista)
     setUsuarios(todos)
     setGuardadas(g)
+    // servidor de antes da configuração dos vendedores: fica sem o resumo deles
+    setVendedores(await getConfigDosVendedores().catch(() => null))
+  }
+
+  async function salvarVendedor() {
+    if (!editandoVendedor) return
+    setSalvando(true)
+    try {
+      await salvarConfigTelaVendedor(editandoVendedor)
+      setEditandoVendedor(null)
+      await recarregar()
+      void avisar('Vendedores: salvo — vale na próxima vez que a tela deles atualizar (menos pra quem tem permissões só dele).')
+    } catch (err) {
+      void avisar(err instanceof Error ? err.message : 'Erro ao salvar no servidor.')
+    } finally {
+      setSalvando(false)
+    }
   }
 
   useEffect(() => {
@@ -145,7 +176,8 @@ export function TiposUsuarioCard() {
       <p className="mb-4 text-sm text-ink-400">
         Cada função define o que a pessoa acessa: se é administrador (vê prejuízo e faturamento), as abas, o que aparece na Tela
         Inicial e os status que pode usar. Em Usuários, é só escolher a função de cada um — e, ao mudar uma função aqui, quem está
-        nela muda junto. O "{ROTULO_PAPEL.admin}", o "{ROTULO_PAPEL.vendedor}" e o "{ROTULO_PAPEL.xadrez}" existem sempre.
+        nela muda junto. O "{ROTULO_PAPEL.admin}", o "{ROTULO_PAPEL.vendedor}" e o "{ROTULO_PAPEL.xadrez}" existem sempre; no
+        Vendedor, "Editar" escolhe o que os vendedores podem fazer e o que aparece na tela deles.
       </p>
 
       {carregando ? (
@@ -159,12 +191,52 @@ export function TiposUsuarioCard() {
             </p>
           </div>
           <div className="py-3">
-            <p className="text-sm font-medium text-ink-900">{ROTULO_PAPEL.vendedor}</p>
-            <p className="text-xs text-ink-400">
-              registra cotações e acompanha as que estão no nome dele; vê os valores só depois de enviada; nada de custos,
-              fornecedores, margens ou faturamento ·{' '}
-              {contagem(usuarios.filter((u) => u.papel === 'vendedor').map((u) => ({ ...u, exibicao: `${u.exibicao} (${u.vendedor || '?'})` })))}
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink-900">{ROTULO_PAPEL.vendedor}</p>
+                <p className="text-xs text-ink-400">
+                  só as cotações que estão no nome dele; vê os valores só depois de enviada; nada de custos, fornecedores, margens ou
+                  faturamento{vendedores ? ` · ${resumoDoVendedor(vendedores.todos)}` : ''} ·{' '}
+                  {contagem(
+                    usuarios
+                      .filter((u) => u.papel === 'vendedor')
+                      .map((u) => ({
+                        ...u,
+                        exibicao: `${u.exibicao} (${u.vendedor || '?'}${u.vendedor && vendedores?.porVendedor[u.vendedor] ? ', permissões próprias' : ''})`,
+                      })),
+                  )}
+                </p>
+              </div>
+              {vendedores && !editandoVendedor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditando(null)
+                    setEditandoVendedor(vendedores.todos)
+                  }}
+                  className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50"
+                >
+                  Editar
+                </button>
+              )}
+            </div>
+            {editandoVendedor && (
+              <div role="group" aria-label="O que os vendedores podem" className="mt-3 space-y-4 rounded-xl border border-ink-200 bg-ink-50/60 p-4">
+                <p className="text-xs text-ink-500">
+                  Vale pra todos os vendedores. Pra um só, use "Permissões" na linha dele em Usuários (ele fica com as dele). Pra ver como
+                  fica, Configurações › Tela dos vendedores.
+                </p>
+                <EditorTelaVendedor valor={editandoVendedor} onChange={setEditandoVendedor} />
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="primary" onClick={() => void salvarVendedor()} disabled={salvando}>
+                    Salvar pra todos os vendedores
+                  </Button>
+                  <Button variant="ghost" onClick={() => setEditandoVendedor(null)}>
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
           {tipos.map((t) => (
             <div key={t.id} className="flex flex-wrap items-center gap-3 py-3">

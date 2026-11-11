@@ -14,7 +14,9 @@ import {
 } from '../tiposUsuario'
 import { EditorPermissoes } from './EditorPermissoes'
 import { BotaoVerTelaDoVendedor } from './TelaDosVendedoresCard'
-import { ROTULO_PAPEL, resumoPermissoes } from './TiposUsuarioCard'
+import { EditorTelaVendedor } from '../vendedor/EditorTelaVendedor'
+import { configDoVendedor, getConfigDosVendedores, salvarConfigDoVendedor, type ConfigDosVendedores, type ConfigTelaVendedor } from '../vendedor/telaVendedor'
+import { ROTULO_PAPEL, resumoDoVendedor, resumoPermissoes } from './TiposUsuarioCard'
 import { VENDEDORES } from '../types'
 import type { PapelUsuario } from '../sessaoUsuario'
 
@@ -82,6 +84,9 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
   const [guardadas, setGuardadas] = useState<PermissoesGuardadas>({ abas: {}, status: {}, telaInicial: {}, financeiro: {} })
   const [tipos, setTipos] = useState<TipoUsuario[]>([])
   const [editando, setEditando] = useState<{ login: string; permissoes: PermissoesDoUsuario } | null>(null)
+  // as permissões de um vendedor só (o que ele pode e o que aparece na tela dele — telaVendedor.ts)
+  const [vendedores, setVendedores] = useState<ConfigDosVendedores | null>(null)
+  const [editandoVendedor, setEditandoVendedor] = useState<{ login: string; vendedor: string; config: ConfigTelaVendedor } | null>(null)
   const [nomeNovo, setNomeNovo] = useState('')
   const [funcaoNova, setFuncaoNova] = useState('admin')
 
@@ -93,6 +98,8 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
       setUsuarios(lista.sort((a, b) => Number(b.pendente) - Number(a.pendente) || a.criadoEm.localeCompare(b.criadoEm)))
       setGuardadas(g)
       setTipos(listaTipos)
+      // servidor de antes da configuração dos vendedores: sem as permissões deles
+      setVendedores(await getConfigDosVendedores().catch(() => null))
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao carregar os usuários.')
     } finally {
@@ -188,6 +195,20 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
     )
   }
 
+  /** As permissões só desse vendedor (null = volta a valer o que está em Funções de usuário › Vendedor). */
+  async function handlePermissoesDoVendedor(u: UsuarioCadastrado, vendedor: string, config: ConfigTelaVendedor | null) {
+    await executar(
+      u.login,
+      async () => {
+        await salvarConfigDoVendedor(vendedor, config)
+        setEditandoVendedor(null)
+      },
+      config
+        ? `Permissões do vendedor ${vendedor} salvas — valem na próxima vez que a tela dele atualizar.`
+        : `${vendedor} volta ao padrão dos vendedores (Funções de usuário › Vendedor).`,
+    )
+  }
+
   const funcaoEscolhida = escolhaDaFuncao(funcaoNova, tipos)
 
   return (
@@ -266,6 +287,10 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                       {u.email || 'sem e-mail de recuperação'}
                       {u.criadoEm && ` · desde ${u.criadoEm.slice(0, 10).split('-').reverse().join('/')}`}
                       {!u.gestor && u.papel === 'admin' && ` · ${resumoPermissoes(permissoes)}`}
+                      {u.papel === 'vendedor' &&
+                        u.vendedor &&
+                        vendedores &&
+                        ` · ${resumoDoVendedor(configDoVendedor(vendedores, u.vendedor))} · ${vendedores.porVendedor[u.vendedor] ? 'permissões próprias' : 'padrão dos vendedores'}`}
                     </p>
                   </div>
                   {u.gestor ? (
@@ -287,6 +312,21 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                           rotulo="Ver a tela dele"
                           className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50"
                         />
+                      )}
+                      {u.papel === 'vendedor' && u.vendedor && vendedores && (
+                        <button
+                          type="button"
+                          aria-expanded={editandoVendedor?.login === u.login}
+                          disabled={ocupado === u.login}
+                          onClick={() =>
+                            setEditandoVendedor(
+                              editandoVendedor?.login === u.login ? null : { login: u.login, vendedor: u.vendedor!, config: configDoVendedor(vendedores, u.vendedor!) },
+                            )
+                          }
+                          className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50"
+                        >
+                          Permissões
+                        </button>
                       )}
                       {u.papel === 'admin' && (
                         <button
@@ -332,6 +372,47 @@ export function UsuariosCard({ embutido = false }: { embutido?: boolean } = {}) 
                     </div>
                   )}
                 </div>
+
+                {editandoVendedor?.login === u.login && vendedores && (
+                  <div
+                    role="group"
+                    aria-label={`Permissões do vendedor ${editandoVendedor.vendedor}`}
+                    className="mt-3 space-y-3 rounded-xl border border-ink-200 bg-ink-50/60 p-3"
+                  >
+                    <p className="text-xs text-ink-400">
+                      Só pro vendedor {editandoVendedor.vendedor}: o que ele pode fazer e o que aparece na tela dele. Os outros continuam com o
+                      que está em Funções de usuário › Vendedor.
+                    </p>
+                    <EditorTelaVendedor valor={editandoVendedor.config} onChange={(config) => setEditandoVendedor({ ...editandoVendedor, config })} />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={ocupado === u.login}
+                        onClick={() => void handlePermissoesDoVendedor(u, editandoVendedor.vendedor, editandoVendedor.config)}
+                        className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-semibold text-surface transition hover:opacity-90"
+                      >
+                        Salvar permissões
+                      </button>
+                      {vendedores.porVendedor[editandoVendedor.vendedor] && (
+                        <button
+                          type="button"
+                          disabled={ocupado === u.login}
+                          onClick={() => void handlePermissoesDoVendedor(u, editandoVendedor.vendedor, null)}
+                          className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50"
+                        >
+                          Usar o padrão dos vendedores
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setEditandoVendedor(null)}
+                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-ink-500 hover:bg-ink-100"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {aberto && (
                   <div className="mt-3 space-y-3 rounded-xl border border-ink-200 bg-ink-50/60 p-3" aria-label={`Permissões de ${u.exibicao}`}>

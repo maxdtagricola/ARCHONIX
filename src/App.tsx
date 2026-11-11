@@ -4,7 +4,7 @@ import { LoginPage } from './components/LoginPage'
 import { MinhaContaModal } from './components/MinhaContaModal'
 import { SaidaAutomatica } from './components/SaidaAutomatica'
 import { nomeDaAba, usePermissoes } from './abasPermitidas'
-import { carregarMinhasPermissoesStatus, carregarStatusConfig, nomeDoStatus, podeMudarStatusPara, useVersaoStatus } from './statusConfig'
+import { carregarMinhasPermissoesStatus, carregarStatusConfig, nomeDoStatus, podeMudarStatusPara, statusAntesDe, useVersaoStatus } from './statusConfig'
 import { TelaInicialPage } from './pages/TelaInicialPage'
 import { useMinhaTelaInicial } from './telaInicialPorUsuario'
 import { Dashboard } from './pages/Dashboard'
@@ -624,9 +624,13 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
     setItems((prev) => prev.map((item) => ({ ...item, product: { ...item.product, perfil } })))
   }
 
+  const antesDoEnviado = (status: string) => statusAntesDe(status, 'ENVIADO')
+
   async function handleEnviarCotacao() {
     if (!editingQuoteId || !currentAdmin) return
-    if (activeStatus === 'PENDENTE' || activeStatus === 'ANALISANDO VALORES') {
+    // qualquer status de antes do ENVIADO (AGUARDANDO FORNECEDOR também: antes ficava como estava, e o
+    // vendedor nunca recebia os valores)
+    if (antesDoEnviado(activeStatus)) {
       // já foi enviada antes e os valores mudaram: o vendedor passa a ver os novos?
       const salva = await buscarQuote(editingQuoteId)
       const atualizar = salva ? await perguntarSeReenviaAoVendedor(salva) : undefined
@@ -634,6 +638,45 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
       setActiveStatus('ENVIADO')
       setActiveResponsavel(currentAdmin)
       setHistoryRefreshKey((k) => k + 1)
+    }
+  }
+
+  /** "Enviar ao vendedor" (janela Enviar cotação): ele passa a ver na tela dele os itens com marca,
+   * prazo e os valores de agora — e baixa/compartilha a planilha (a do cliente ou a nossa) e o texto,
+   * sem esperar a equipe mandar o arquivo. A cotação vai pra ENVIADO; já em ENVIADO, os valores dele
+   * são trocados pelos de agora (o clique é a confirmação). Depois do ENVIADO, os dele não mudam mais
+   * (regra dos valores enviados — ver valoresEnviados.ts), a não ser que nunca tenham sido enviados. */
+  async function handleEnviarAoVendedor(): Promise<boolean> {
+    if (!editingQuoteId || !currentAdmin) return false
+    try {
+      // os valores que vão são os da tela: o que não foi salvo, salva antes
+      if (temAlteracoesNaoSalvas && !(await salvarCotacao(false))) return false
+      const salva = await buscarQuote(editingQuoteId)
+      if (!salva) throw new Error('Cotação não encontrada no servidor.')
+      let enviada: QuoteRecord
+      if (antesDoEnviado(salva.status)) {
+        enviada = await updateQuoteStatus(salva.id, 'ENVIADO', currentAdmin, undefined, undefined, undefined, { atualizarValoresDoVendedor: true })
+        setActiveStatus('ENVIADO')
+        setActiveResponsavel(currentAdmin)
+      } else if (salva.status === 'ENVIADO' || !salva.valoresEnviados) {
+        enviada = await atualizarValoresEnviados(salva.id, currentAdmin)
+      } else {
+        await avisar(
+          `A ${salva.codigo} já passou do ENVIADO: o vendedor ${salva.vendedor} continua vendo os valores que foram enviados (depois do envio eles não mudam).`,
+          { titulo: 'Enviar ao vendedor' },
+        )
+        return false
+      }
+      setHistoryRefreshKey((k) => k + 1)
+      void avisar(
+        `Pronto: o vendedor ${enviada.vendedor} já vê a ${enviada.codigo} na tela dele, com marca, prazo e valores ` +
+          `(total ${formatCurrency(enviada.valoresEnviados?.total ?? 0)}), e pode baixar e compartilhar a planilha e o texto.`,
+        { titulo: 'Enviado ao vendedor' },
+      )
+      return true
+    } catch (err) {
+      await avisar(err instanceof Error ? err.message : 'Erro ao enviar ao vendedor.')
+      return false
     }
   }
 
@@ -729,7 +772,13 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
     }
   }
 
-  async function handleSave(): Promise<boolean> {
+  function handleSave(): Promise<boolean> {
+    return salvarCotacao(true)
+  }
+
+  /** `perguntarDoVendedor`: com valores diferentes dos que o vendedor vê, pergunta se troca (não pergunta
+   * quando quem chamou já vai mandar os valores pra ele — "Enviar ao vendedor"). */
+  async function salvarCotacao(perguntarDoVendedor: boolean): Promise<boolean> {
     if (!currentAdmin) return false
     try {
       const record = await saveQuote(
@@ -759,7 +808,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
       setTemAlteracoesNaoSalvas(false)
       setCotacaoRecemSalva(true)
       setTimeout(() => setCotacaoRecemSalva(false), 2500)
-      await perguntarSeAtualizaOVendedor(record)
+      if (perguntarDoVendedor) await perguntarSeAtualizaOVendedor(record)
       return true
     } catch (err) {
       await avisar(err instanceof Error ? err.message : 'Erro ao salvar a cotação no servidor.')
@@ -1008,6 +1057,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
           onGoToComparar={() => changeTab('comparar')}
           onGoToFrete={() => changeTab('frete')}
           onEnviarCotacao={handleEnviarCotacao}
+          onEnviarAoVendedor={handleEnviarAoVendedor}
           planilhaCliente={planilhaDoCliente}
           onVerPlanilhaCliente={() => setMostrarPlanilhaCliente(true)}
           createdAt={activeCreatedAt}

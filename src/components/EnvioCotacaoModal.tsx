@@ -27,6 +27,7 @@ export function EnvioCotacaoModal({
   planilhaCliente,
   onClose,
   onEnviado,
+  onEnviarAoVendedor,
 }: {
   items: QuoteItem[]
   cliente: string
@@ -37,9 +38,22 @@ export function EnvioCotacaoModal({
   planilhaCliente?: { nomeArquivo: string; carregar: () => Promise<PlanilhaClienteArquivo | undefined> }
   onClose: () => void
   onEnviado: () => void
+  /** Manda pro vendedor ver na tela dele (com a planilha e o texto) — só quando ele tem a tela. */
+  onEnviarAoVendedor?: () => Promise<void>
 }) {
   const [formato, setFormato] = useState<Formato>(planilhaCliente ? 'importada' : 'padrao')
   const [enviando, setEnviando] = useState(false)
+  const [mandandoAoVendedor, setMandandoAoVendedor] = useState(false)
+
+  async function enviarAoVendedor() {
+    if (!onEnviarAoVendedor) return
+    setMandandoAoVendedor(true)
+    try {
+      await onEnviarAoVendedor()
+    } finally {
+      setMandandoAoVendedor(false)
+    }
+  }
 
   const linhas = useMemo(
     () => items.map((item) => ({ item, resultado: calculateItem(item.product, item.pricing) })),
@@ -176,6 +190,22 @@ export function EnvioCotacaoModal({
           <PreviaPlanilhaCliente resultado={resultado} gerada={formato === 'padrao'} />
         ) : (
           <p className="text-sm text-ink-400 py-4">Montando a planilha…</p>
+        )}
+
+        {onEnviarAoVendedor && (
+          <div
+            role="group"
+            aria-label="Enviar ao vendedor"
+            className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2"
+          >
+            <p className="min-w-0 flex-1 text-xs text-sky-900">
+              O vendedor <span className="font-semibold">{vendedor}</span> passa a ver a cotação na tela dele, com marca, prazo e os valores de
+              agora, e baixa e compartilha a planilha e o texto com o cliente. A cotação vai pra "ENVIADO".
+            </p>
+            <Button variant="primary" onClick={() => void enviarAoVendedor()} disabled={mandandoAoVendedor}>
+              {mandandoAoVendedor ? 'Enviando…' : `Enviar ao vendedor ${vendedor}`}
+            </Button>
+          </div>
         )}
 
         <div className="mt-3 border-t border-ink-100 pt-3">

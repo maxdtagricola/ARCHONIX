@@ -5,31 +5,28 @@ import { useFecharComEsc } from '../teclaEsc'
 import { VENDEDORES } from '../types'
 import type { UsuarioLogado } from '../sessaoUsuario'
 import { AppVendedor } from './AppVendedor'
-import {
-  CONFIG_TELA_VENDEDOR_PADRAO,
-  FORMAS_DE_IMPORTAR,
-  PARTES_DA_TELA_VENDEDOR,
-  getConfigTelaVendedor,
-  salvarConfigTelaVendedor,
-  type ConfigTelaVendedor,
-} from './telaVendedor'
+import { EditorTelaVendedor } from './EditorTelaVendedor'
+import { CONFIG_TELA_VENDEDOR_PADRAO, getConfigDosVendedores, salvarConfigTelaVendedor, type ConfigTelaVendedor } from './telaVendedor'
 
 /** A tela de um vendedor como ele vê (as cotações dele, pelo mesmo filtro do servidor), com o painel
- * pra escolher o que aparece pra todos os vendedores — vale ao vivo aqui e, salvo, pra eles. Só pro
- * Max; nada que se faça na tela em si é salvo. */
+ * pra escolher o que vale pra todos os vendedores — ao vivo aqui e, salvo, pra eles. Vendedor com
+ * permissões só dele (Usuários › Permissões) aparece com as dele. Só pro Max; nada que se faça na tela
+ * em si é salvo. */
 export function PreviaTelaVendedor({ vendedorInicial, aoFechar }: { vendedorInicial?: string; aoFechar: () => void }) {
   const [vendedor, setVendedor] = useState(vendedorInicial && VENDEDORES.includes(vendedorInicial) ? vendedorInicial : VENDEDORES[0])
   const [salva, setSalva] = useState<ConfigTelaVendedor | null>(null)
   const [config, setConfig] = useState<ConfigTelaVendedor>(CONFIG_TELA_VENDEDOR_PADRAO)
+  const [porVendedor, setPorVendedor] = useState<Record<string, ConfigTelaVendedor>>({})
   const [painel, setPainel] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const alterada = salva !== null && JSON.stringify(salva) !== JSON.stringify(config)
 
   useEffect(() => {
-    getConfigTelaVendedor()
+    getConfigDosVendedores()
       .then((c) => {
-        setSalva(c)
-        setConfig(c)
+        setSalva(c.todos)
+        setConfig(c.todos)
+        setPorVendedor(c.porVendedor)
       })
       .catch(() => {
         // servidor de antes desta configuração: começa do padrão
@@ -48,7 +45,7 @@ export function PreviaTelaVendedor({ vendedorInicial, aoFechar }: { vendedorInic
     try {
       await salvarConfigTelaVendedor(config)
       setSalva(config)
-      void avisar('Configuração salva — os vendedores já veem assim na próxima vez que a tela atualizar.')
+      void avisar('Configuração salva — os vendedores já veem assim na próxima vez que a tela atualizar (menos os que têm permissões só deles).')
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao salvar no servidor.')
     } finally {
@@ -66,7 +63,7 @@ export function PreviaTelaVendedor({ vendedorInicial, aoFechar }: { vendedorInic
     pendente: false,
     emailMascarado: '',
   }
-  const caixa = 'flex items-start gap-2 py-0.5 text-sm text-ink-700'
+  const doVendedor = porVendedor[vendedor]
 
   return createPortal(
     <div role="dialog" aria-modal="true" aria-label="Visualização da tela do vendedor" className="fixed inset-0 z-[65] flex flex-col bg-ink-50">
@@ -101,55 +98,20 @@ export function PreviaTelaVendedor({ vendedorInicial, aoFechar }: { vendedorInic
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div className="min-h-0 flex-1 overflow-y-auto" aria-label={`Tela do vendedor ${vendedor}`}>
           {/* key: trocar de vendedor começa a tela do zero */}
-          <AppVendedor key={vendedor} usuario={usuario} previa={{ vendedor, config }} />
+          <AppVendedor key={vendedor} usuario={usuario} previa={{ vendedor, config: doVendedor ?? config }} />
         </div>
 
         {painel && (
           <aside aria-label="Configurar a tela dos vendedores" className="max-h-[45vh] shrink-0 overflow-y-auto border-t border-ink-200 bg-surface p-4 lg:max-h-none lg:w-80 lg:border-l lg:border-t-0">
-            <p className="mb-1 font-display text-sm font-semibold text-ink-900">O que os vendedores veem</p>
+            <p className="mb-1 font-display text-sm font-semibold text-ink-900">O que os vendedores podem e veem</p>
             <p className="mb-3 text-xs text-ink-400">Vale pra todos. Aparece na hora aqui ao lado; pros vendedores, depois de salvar.</p>
 
-            <label className="block">
-              <span className="field-label">Recado no topo da tela</span>
-              <textarea
-                className="field-input min-h-[4.5rem] text-sm"
-                placeholder="Ex.: Mandem a planilha do cliente sempre que tiverem."
-                maxLength={500}
-                value={config.mensagem}
-                onChange={(e) => setConfig({ ...config, mensagem: e.target.value })}
-              />
-            </label>
-
-            <fieldset className="mt-3">
-              <legend className="field-label">Partes de cada cotação</legend>
-              {PARTES_DA_TELA_VENDEDOR.map((p) => (
-                <label key={p.key} className={caixa}>
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    checked={config.partes[p.key]}
-                    onChange={() => setConfig({ ...config, partes: { ...config.partes, [p.key]: !config.partes[p.key] } })}
-                  />
-                  {p.label}
-                </label>
-              ))}
-            </fieldset>
-
-            <fieldset className="mt-3">
-              <legend className="field-label">Formas de importar os itens</legend>
-              {FORMAS_DE_IMPORTAR.map((f) => (
-                <label key={f.key} className={caixa}>
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    aria-label={`Importar: ${f.label}`}
-                    checked={config.importar[f.key]}
-                    onChange={() => setConfig({ ...config, importar: { ...config.importar, [f.key]: !config.importar[f.key] } })}
-                  />
-                  {f.label}
-                </label>
-              ))}
-            </fieldset>
+            {doVendedor && (
+              <p role="note" className="mb-3 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                {vendedor} tem permissões só dele (Usuários › Permissões): a tela ao lado mostra as dele, não estas.
+              </p>
+            )}
+            <EditorTelaVendedor valor={config} onChange={setConfig} />
 
             <div className="mt-4 flex flex-wrap gap-2">
               <button

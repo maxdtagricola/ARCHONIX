@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { sair } from '../auth'
 import { avisar } from '../dialogs'
+import { CHAVE_ULTIMA_ATIVIDADE, getSessao } from '../sessaoUsuario'
 
 // Saída automática: sem atividade no site (mouse, toque, tecla, rolagem) pelo tempo escolhido em
 // Configurações > Saída automática, o usuário sai sozinho. O tempo vale por aparelho (padrão 5 min).
 // A atividade fica anotada no localStorage, então mexer numa aba do site conta pras outras abertas
-// no mesmo aparelho. Um minuto antes aparece o aviso, e qualquer movimento cancela. O rascunho da
-// cotação aberta não se perde: ao entrar de novo, o site oferece recuperar.
+// no mesmo aparelho — e o tempo em que a página ficou parada (computador suspenso, aba recarregada
+// depois de muito tempo) também conta: voltando depois do limite, sai na hora. Um minuto antes aparece
+// o aviso, e qualquer movimento cancela. O rascunho da cotação aberta não se perde: ao entrar de novo,
+// o site oferece recuperar.
 
 export const CHAVE_MINUTOS_SAIDA = 'saidaAutomatica:minutos'
-const CHAVE_ULTIMA_ATIVIDADE = 'saidaAutomatica:ultimaAtividade'
+// o vendedor não tem Configurações: o tempo dele é o que o Max escolheu (Funções de usuário › Vendedor
+// ou Usuários › Permissões — telaVendedor.ts), guardado aqui quando a tela dele carrega
+const CHAVE_MINUTOS_DO_VENDEDOR = 'saidaAutomatica:minutosDoVendedor'
 export const MINUTOS_SAIDA_PADRAO = 5
 /** 0 = nunca sai sozinho. */
 export const OPCOES_SAIDA_AUTOMATICA = [3, 5, 10, 30, 60, 0] as const
@@ -32,9 +37,25 @@ function lerNumero(chave: string): number | null {
   }
 }
 
+const opcaoValida = (m: number | null): m is number => m !== null && (OPCOES_SAIDA_AUTOMATICA as readonly number[]).includes(m)
+
 function minutosEscolhidos(): number {
+  if (getSessao()?.usuario.papel === 'vendedor') {
+    const doVendedor = lerNumero(CHAVE_MINUTOS_DO_VENDEDOR)
+    if (opcaoValida(doVendedor)) return doVendedor
+  }
   const m = lerNumero(CHAVE_MINUTOS_SAIDA)
-  return m !== null && (OPCOES_SAIDA_AUTOMATICA as readonly number[]).includes(m) ? m : MINUTOS_SAIDA_PADRAO
+  return opcaoValida(m) ? m : MINUTOS_SAIDA_PADRAO
+}
+
+/** A tela do vendedor guarda o tempo que vale pra ele (null = o padrão do aparelho). */
+export function guardarMinutosDoVendedor(minutos: number | null): void {
+  try {
+    if (opcaoValida(minutos)) localStorage.setItem(CHAVE_MINUTOS_DO_VENDEDOR, String(minutos))
+    else localStorage.removeItem(CHAVE_MINUTOS_DO_VENDEDOR)
+  } catch {
+    // sem armazenamento: vale o padrão
+  }
 }
 
 /** Montado enquanto há alguém logado: conta o tempo sem atividade e tira o usuário quando passa do limite. */
@@ -45,6 +66,24 @@ export function SaidaAutomatica() {
   const [segundosRestantes, setSegundosRestantes] = useState<number | null>(null)
 
   useEffect(() => {
+    function sairPorInatividade(minutos: number) {
+      if (saindo.current) return
+      saindo.current = true
+      void sair().then(() =>
+        avisar(`Você saiu do site depois de ${minutos} minutos sem atividade. É só entrar de novo.`, {
+          titulo: 'Saída automática',
+        }),
+      )
+    }
+    // a última atividade anotada é de antes desta página abrir: se já passou do limite, sai agora
+    // (antes, abrir a página zerava o tempo e quem voltava depois de horas continuava dentro)
+    const minutosAoAbrir = minutosEscolhidos()
+    const anotadaAntes = lerNumero(CHAVE_ULTIMA_ATIVIDADE)
+    if (minutosAoAbrir > 0 && anotadaAntes !== null && Date.now() - anotadaAntes > minutosAoAbrir * 60 * 1000) {
+      sairPorInatividade(minutosAoAbrir)
+      return
+    }
+
     function anotar() {
       const agora = Date.now()
       ultimaAtividade.current = agora
@@ -70,13 +109,7 @@ export function SaidaAutomatica() {
       const ultima = Math.max(ultimaAtividade.current, lerNumero(CHAVE_ULTIMA_ATIVIDADE) ?? 0)
       const restante = minutos * 60 * 1000 - (Date.now() - ultima)
       if (restante <= 0) {
-        if (saindo.current) return
-        saindo.current = true
-        void sair().then(() =>
-          avisar(`Você saiu do site depois de ${minutos} minutos sem atividade. É só entrar de novo.`, {
-            titulo: 'Saída automática',
-          }),
-        )
+        sairPorInatividade(minutos)
         return
       }
       setSegundosRestantes(restante <= AVISO_ANTES_MS ? Math.ceil(restante / 1000) : null)

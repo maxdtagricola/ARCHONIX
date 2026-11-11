@@ -148,6 +148,33 @@ export function ordemComExtras(tipo: TipoStatus, presentes: Iterable<string>): s
   return [...lista, ...extras]
 }
 
+/** O status vem antes de `marco` na ordem do fluxo? Um status que não está mais na lista (criado e
+ * depois excluído) conta como antes — não dá pra saber onde ficava. */
+export function statusAntesDe(status: string, marco: string, tipo: TipoStatus = 'cotacoes'): boolean {
+  const ordem = statusDe(tipo)
+  const posicao = ordem.indexOf(status)
+  return posicao === -1 || posicao < ordem.indexOf(marco)
+}
+
+/** O caminho da cotação só pra frente (o que o vendedor vê): voltar a um status — de ANALISANDO VALORES
+ * pra AGUARDANDO FORNECEDOR, por exemplo — tira do caminho o que vinha depois dele. O mesmo que o
+ * servidor manda ao vendedor (andamentoParaVendedor no server.js); a equipe vê o histórico inteiro. */
+export function caminhoSemVoltas(statuses: string[], tipo: TipoStatus = 'cotacoes'): string[] {
+  const ordem = statusDe(tipo)
+  const caminho: string[] = []
+  for (const s of statuses) {
+    const jaEsteve = caminho.indexOf(s)
+    if (jaEsteve >= 0) {
+      caminho.length = jaEsteve + 1
+      continue
+    }
+    const posicao = ordem.indexOf(s)
+    if (posicao >= 0) while (caminho.length > 0 && ordem.indexOf(caminho[caminho.length - 1]) >= posicao) caminho.pop()
+    caminho.push(s)
+  }
+  return caminho
+}
+
 /** O nome que aparece na tela (o código, se não houver — ex.: status criado e já excluído). */
 export function nomeDoStatus(id: string, tipo: TipoStatus = 'cotacoes'): string {
   return config[tipo].find((d) => d.id === id)?.nome ?? id

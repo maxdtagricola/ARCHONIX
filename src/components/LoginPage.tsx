@@ -14,10 +14,11 @@ import { ErroDoServidor } from '../db/db'
 import { FundoEmVideo } from './FundoEmVideo'
 import { useEstadoPersistente } from '../estadoPersistente'
 import { useFecharComEsc } from '../teclaEsc'
+import { ultimoUsuario } from '../sessaoUsuario'
 
 // -----------------------------------------------------------------------
 // Entrada do site: usuário e senha (sem lista de nomes). Caminhos:
-//  - usuário → senha → entra;
+//  - usuário → senha → entra (o último que entrou neste aparelho já vem escolhido: só a senha);
 //  - usuário que ainda não tem senha (MÁXIMUS, GOUVÊA, MAICON no primeiro
 //    uso, ou depois de o Max liberar uma nova) → cria a senha + e-mail de
 //    recuperação → entra;
@@ -38,7 +39,12 @@ function mensagemDe(err: unknown): string {
 }
 
 export function LoginPage() {
-  const [etapa, setEtapa] = useState<Etapa>({ tipo: 'usuario' })
+  // quem entrou por último neste aparelho: já abre pedindo só a senha dele (saiu sozinho por tempo, fechou
+  // o site...) — "trocar usuário" volta pro campo do usuário
+  const [etapa, setEtapa] = useState<Etapa>(() => {
+    const ultimo = ultimoUsuario()
+    return ultimo ? { tipo: 'senha', usuario: ultimo.login, exibicao: ultimo.exibicao || ultimo.login } : { tipo: 'usuario' }
+  })
   const [usuario, setUsuario] = useState('')
 
   // a escolha de pausar o vídeo de fundo, feita em Configurações (vale por aparelho)

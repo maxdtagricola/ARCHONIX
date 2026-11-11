@@ -10,6 +10,8 @@ export interface ValoresParaOVendedor {
   uf?: string
   /** Quem cota trocou os valores depois do primeiro envio. */
   atualizada?: boolean
+  /** Muda quando a equipe manda valores (de novo) — é o que marca "valores novos" (sem dizer quando). */
+  versao?: string
   /** (servidores de antes) */
   atualizadoEm?: number
 }
@@ -34,7 +36,8 @@ export interface CotacaoDoVendedor {
   podeAlterar?: boolean
   /** Quem está cotando (vazio enquanto PENDENTE). */
   responsavelStatus: string
-  /** Só a sequência dos status — sem as datas (servidores de antes mandavam; a tela não mostra). */
+  /** Só a sequência dos status, sem as voltas e sem as datas (servidores de antes mandavam o histórico
+   * inteiro, com datas; a tela tira as voltas e não mostra as datas). */
   statusHistory: { status: QuoteStatus; changedAt?: number }[]
   /** A lista de itens dele, a que ele vê e altera: a da precificação (com o que ele mudou e a equipe
    * ainda não salvou) ou, antes de a equipe precificar, a que ele mandou. Servidores de antes mandavam
