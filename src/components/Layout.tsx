@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { FundoEmVideo } from './FundoEmVideo'
-import { aplicarTema, getTema, type Tema } from '../theme'
+import { BotaoTema } from './BotaoTema'
 import { ICONE_SAIR, ICONES_ABAS } from './IconesAbas'
 import { useFecharComEsc } from '../teclaEsc'
 
@@ -120,9 +120,6 @@ export function Layout({
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') !== '0')
   const [mobileOpen, setMobileOpen] = useState(false)
   useFecharComEsc(() => setMobileOpen(false), mobileOpen)
-  // tema claro/escuro fica aqui na barra lateral (sempre à mão, em qualquer tela) — vale só nesse
-  // aparelho, cada admin escolhe o seu (ver theme.ts)
-  const [tema, setTema] = useState<Tema>(() => getTema())
   const telaGrande = useTelaGrande()
   // só a barra fixa do computador recolhe; a gaveta do celular mostra sempre os nomes
   const recolhido = collapsed && telaGrande
@@ -130,12 +127,6 @@ export function Layout({
   useEffect(() => {
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0')
   }, [collapsed])
-
-  function alternarTema() {
-    const novo: Tema = tema === 'escuro' ? 'claro' : 'escuro'
-    setTema(novo)
-    aplicarTema(novo)
-  }
 
   /** O "R$" do topo recolhe/expande o menu (no celular, fecha a gaveta). */
   function alternarMenu() {
@@ -284,37 +275,7 @@ export function Layout({
               </p>
             </div>
           )}
-          <button
-            type="button"
-            onClick={alternarTema}
-            role="switch"
-            aria-checked={tema === 'escuro'}
-            title={tema === 'escuro' ? 'Modo escuro — mudar pro claro' : 'Modo claro — mudar pro escuro'}
-            aria-label={tema === 'escuro' ? 'Mudar pro modo claro' : 'Mudar pro modo escuro'}
-            className={`flex shrink-0 items-center gap-1.5 rounded-lg px-1.5 py-1 text-ink-500 hover:bg-ink-100 hover:text-ink-800 transition ${
-              recolhido ? 'w-full justify-center' : ''
-            }`}
-          >
-            <span aria-hidden className="text-base leading-none">
-              {tema === 'escuro' ? '☀' : '☾'}
-            </span>
-            {!recolhido && (
-              <span
-                aria-hidden
-                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition ${
-                  tema === 'escuro' ? 'bg-ink-800' : 'bg-ink-200'
-                }`}
-              >
-                {/* bg-surface/bg-ink-800 (variáveis que trocam com o tema) em vez de branco/preto fixos —
-                 * no modo escuro a trilha fica clara e a bolinha escura, sempre com contraste */}
-                <span
-                  className={`inline-block h-4 w-4 rounded-full bg-surface shadow transition-transform ${
-                    tema === 'escuro' ? 'translate-x-[18px]' : 'translate-x-0.5'
-                  }`}
-                />
-              </span>
-            )}
-          </button>
+          <BotaoTema recolhido={recolhido} />
         </div>
       </aside>
 

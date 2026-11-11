@@ -6,6 +6,7 @@ import { MinhaContaModal } from '../components/MinhaContaModal'
 import { guardarMinutosDoVendedor } from '../components/SaidaAutomatica'
 import { getStatusColors } from '../db/configRepo'
 import { avisar } from '../dialogs'
+import { BotaoTema } from '../components/BotaoTema'
 import { caminhoSemVoltas, carregarStatusConfig, nomeDoStatus, ordemComExtras, statusDe, useVersaoStatus } from '../statusConfig'
 import { corPadraoDoStatus, corTexto } from '../statusColors'
 import { formatCurrency, formatDate, makeId } from '../utils'
@@ -235,6 +236,8 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
         </div>
         {!previa && (
           <div className="flex items-center gap-4">
+            {/* o mesmo modo claro/escuro do menu da equipe — vale só neste aparelho */}
+            <BotaoTema />
             <button type="button" onClick={() => setMostrarMinhaConta(true)} className="text-xs text-ink-500 underline hover:text-ink-700">
               Minha conta
             </button>
