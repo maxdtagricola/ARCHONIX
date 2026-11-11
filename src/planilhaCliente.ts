@@ -91,14 +91,15 @@ function valorNaCelula(ws: XLSX.WorkSheet, linha: number, coluna: number): numbe
 
 /**
  * Reabre a planilha original do cliente e preenche, nas linhas cuja
- * Referência bate com algum item da cotação, o valor unitário, o valor
- * total e o prazo de entrega — e apaga a marcação "cotar" da linha, já que
- * o item foi precificado. Atualiza também o total geral, se achar o rótulo.
+ * Referência bate com algum item da cotação, a marca, o prazo de entrega, o
+ * valor unitário e o valor total — e apaga a marcação "cotar" da linha, já
+ * que o item foi precificado. Atualiza também o total geral, se achar o rótulo.
  *
  * O que já estava preenchido na planilha nunca é sobrescrito: linha que já
  * tem valor (unitário ou total) fica como veio — e entra na lista
- * itensComValorNaPlanilha, pra avisar quem está gerando; prazo que já
- * estava preenchido também fica.
+ * itensComValorNaPlanilha, pra avisar quem está gerando; marca e prazo que o
+ * cliente já tinha escrito também ficam ("COTAR" na célula não conta: é só a
+ * marcação, e dá lugar à marca/prazo).
  *
  * O arquivo devolvido é o próprio arquivo do cliente, alterado só nessas
  * células (direto no XML de dentro do .xlsx): logo, cores, bordas, larguras,
@@ -117,6 +118,7 @@ export function gerarPlanilhaAtualizada(
       return {
         referencia: it.product.referencia,
         descricao: it.product.descricao,
+        marca: it.product.marca,
         entrega: it.product.prazoEntrega,
         valorUnitario: resultado.precoVendaUnitario,
         valorTotal: resultado.precoVendaTotal,
@@ -130,10 +132,14 @@ export function gerarPlanilhaAtualizada(
 export interface LinhaParaPreencher {
   referencia: string
   descricao: string
+  marca: string
   entrega: string
   valorUnitario: number
   valorTotal: number
 }
+
+/** A marcação que o cliente põe na linha do item a cotar ("COTAR", "A COTAR!"). */
+const ehMarcacaoCotar = (valor: unknown) => /^(a\s+)?cotar[\s!.]*$/.test(normalizar(valor))
 
 /** O preenchimento em si (ver gerarPlanilhaAtualizada): casa cada linha da planilha pela referência. */
 export function preencherPlanilhaDoCliente(
@@ -189,12 +195,20 @@ export function preencherPlanilhaDoCliente(
           if (tabela.colVlrTotal > -1) {
             escrever(r, tabela.colVlrTotal, Number(item.valorTotal.toFixed(2)))
           }
-          // prazo que o cliente já tinha escrito fica
-          if (tabela.colEntrega > -1 && item.entrega.trim() && !cellTexto(ws, r, tabela.colEntrega)) {
-            escrever(r, tabela.colEntrega, item.entrega.trim())
+          // marca e prazo que o cliente já tinha escrito ficam; célula vazia ou só com "COTAR" recebe
+          const escritas = new Set<number>()
+          for (const [coluna, texto] of [
+            [tabela.colMarca, item.marca],
+            [tabela.colEntrega, item.entrega],
+          ] as const) {
+            const doCliente = coluna > -1 ? cellTexto(ws, r, coluna) : ''
+            if (coluna > -1 && texto.trim() && (!doCliente || ehMarcacaoCotar(doCliente))) {
+              escrever(r, coluna, texto.trim())
+              escritas.add(coluna)
+            }
           }
           for (let c = 1; c <= tabela.maxCol; c++) {
-            if (/^(a\s+)?cotar[\s!.]*$/.test(normalizar(cellValue(ws, r, c)))) apagar(r, c)
+            if (!escritas.has(c) && ehMarcacaoCotar(cellValue(ws, r, c))) apagar(r, c)
           }
           itensAtualizados++
         }

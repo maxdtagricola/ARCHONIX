@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { dbGet } from '../db/db'
 import { sair } from '../auth'
 import { DialogHost } from '../components/DialogHost'
@@ -11,22 +11,29 @@ import { formatCurrency, formatDate, makeId } from '../utils'
 import type { UsuarioLogado } from '../sessaoUsuario'
 import {
   abrirAnexo,
+  itensDaLista,
   listarCotacoesDoVendedor,
   listarMinhasCotacoes,
+  podeAlterar,
   salvarMinhaCotacao,
   type ArquivoParaAnexar,
   type CotacaoDoVendedor,
   type DadosDaCotacaoDoVendedor,
   type ItemPedido,
+  type ValoresParaOVendedor,
 } from './cotacaoDoVendedor'
 import { ImportarItens, type ResultadoImportacao } from './ImportarItens'
+import type { FormatoDaCotacao } from './PlanilhaDoVendedor'
 import { CONFIG_TELA_VENDEDOR_PADRAO, getConfigTelaVendedor, type ConfigTelaVendedor, type FormaDeImportar, type ParteDaTelaVendedor } from './telaVendedor'
+import type { ItemValorEnviado } from '../types'
 
 // O site do vendedor: só as cotações que estão no nome dele. Ele registra a cotação (cliente, máquina,
 // os itens — digitados ou importados de planilha, foto/print, PDF ou texto), acompanha o andamento e,
-// depois que a cotação foi enviada, vê os valores que mandamos. Pode alterar as dele: cada alteração
-// fica registrada na cotação e quem está cotando é avisado (o servidor é quem registra e quem filtra —
-// ver "vendedores" no server.js). O que aparece, o Max escolhe (telaVendedor.ts) — vendo esta mesma
+// depois que a cotação foi enviada, vê os itens com marca, prazo e os valores que mandamos — em
+// planilha ou em texto, pra mandar ao cliente. Pode alterar as dele (ali mesmo, no cartão) até antes
+// do PEDIDO DE COMPRA: cada alteração fica registrada na cotação, quem está cotando é avisado e os
+// itens entram na Precificação (o servidor é quem registra, filtra e trava — ver "vendedores" no
+// server.js; itensDoVendedor.ts). O que aparece, o Max escolhe (telaVendedor.ts) — vendo esta mesma
 // tela em `previa` (PreviaTelaVendedor), em que nada é salvo.
 
 /** A tela vista pelo Max: as cotações de `vendedor` como ele vê, com a configuração sendo editada. */
@@ -86,14 +93,35 @@ function semMudanca(c: CotacaoDoVendedor, d: DadosDaCotacaoDoVendedor): boolean 
     t(c.maquina) === t(d.maquina) &&
     c.observacao.trim() === d.observacao.trim() &&
     dataParaCampo(c.dataSolicitacao) === dataParaCampo(d.dataSolicitacao) &&
-    itens(c.itensPreRegistro) === itens(d.itensPreRegistro)
+    itens(itensDaLista(c)) === itens(d.itensPreRegistro)
   )
+}
+
+const codigoComparavel = (s: string) => s.replace(/[\s.-]+/g, '').toUpperCase()
+
+/** O valor enviado de um item da lista dele: pelo id do item ou, nos enviados antes de ter id, pelo código. */
+function valorDoItem(valores: ValoresParaOVendedor, i: ItemPedido): ItemValorEnviado | undefined {
+  const codigo = codigoComparavel(i.referencia || i.interno)
+  return valores.itens.find((v) => v.id === i.id) ?? (codigo ? valores.itens.find((v) => !v.id && codigoComparavel(v.referencia) === codigo) : undefined)
+}
+
+/** A lista dele mudou depois do envio (os valores que ele vê são de outra lista)? */
+function mudouDepoisDoEnvio(lista: ItemPedido[], valores: ValoresParaOVendedor): boolean {
+  const chaves = (xs: { referencia: string; interno?: string; descricao: string; quantidade: number }[]) =>
+    xs
+      .filter((i) => i.referencia || i.interno || i.descricao)
+      .map((i) => `${codigoComparavel(i.referencia || i.interno || i.descricao)}|${i.quantidade}`)
+      .sort()
+      .join(',')
+  return chaves(lista) !== chaves(valores.itens)
 }
 
 export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previa?: PreviaDaTela }) {
   const [cotacoes, setCotacoes] = useState<CotacaoDoVendedor[] | null>(null)
   const [cores, setCores] = useState<Record<string, string>>({})
-  const [editando, setEditando] = useState<CotacaoDoVendedor | 'nova' | null>(null)
+  const [novaAberta, setNovaAberta] = useState(false)
+  // a cotação sendo alterada (o formulário abre no próprio cartão dela)
+  const [editandoId, setEditandoId] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('')
   const [mostrarMinhaConta, setMostrarMinhaConta] = useState(false)
@@ -178,14 +206,13 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
             {config.mensagem.trim()}
           </p>
         )}
-        {editando ? (
+        {novaAberta ? (
           <FormularioCotacao
-            cotacao={editando === 'nova' ? undefined : editando}
             formas={config.importar}
             previa={!!previa}
-            onCancelar={() => setEditando(null)}
+            onCancelar={() => setNovaAberta(false)}
             onSalva={async (mensagem) => {
-              setEditando(null)
+              setNovaAberta(false)
               await recarregar()
               void avisar(mensagem)
             }}
@@ -194,8 +221,10 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
           <div className="flex flex-wrap items-end gap-3">
             <button
               type="button"
-              onClick={() => setEditando('nova')}
-              className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-semibold text-surface transition hover:opacity-90"
+              disabled={!!editandoId}
+              title={editandoId ? 'Salve ou cancele a alteração aberta antes' : undefined}
+              onClick={() => setNovaAberta(true)}
+              className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-semibold text-surface transition hover:opacity-90 disabled:opacity-50"
             >
               + Nova cotação
             </button>
@@ -238,7 +267,24 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
                 cor={corDoStatus(c.status)}
                 corDoStatus={corDoStatus}
                 partes={config.partes}
-                onEditar={editando ? undefined : () => setEditando(c)}
+                onEditar={editandoId || novaAberta ? undefined : () => setEditandoId(c.id)}
+                formulario={
+                  editandoId === c.id ? (
+                    <FormularioCotacao
+                      cotacao={c}
+                      formas={config.importar}
+                      previa={!!previa}
+                      valores={config.partes.valores ? c.valoresEnviados : undefined}
+                      embutido
+                      onCancelar={() => setEditandoId(null)}
+                      onSalva={async (mensagem) => {
+                        setEditandoId(null)
+                        await recarregar()
+                        void avisar(mensagem)
+                      }}
+                    />
+                  ) : undefined
+                }
               />
             ))}
           </div>
@@ -265,6 +311,7 @@ function CartaoCotacao({
   corDoStatus,
   partes,
   onEditar,
+  formulario,
 }: {
   c: CotacaoDoVendedor
   cor: string
@@ -272,14 +319,18 @@ function CartaoCotacao({
   /** O que o Max escolheu mostrar (telaVendedor.ts). */
   partes: Record<ParteDaTelaVendedor, boolean>
   onEditar?: () => void
+  /** Sendo alterada: o formulário aparece aqui, no lugar dos detalhes. */
+  formulario?: ReactNode
 }) {
-  const [aberto, setAberto] = useState(false)
-  const [planilhaAberta, setPlanilhaAberta] = useState(false)
+  const [abertoAgora, setAberto] = useState(false)
+  const aberto = abertoAgora || !!formulario
+  const [janela, setJanela] = useState<{ formato?: FormatoDaCotacao } | null>(null)
   const v = partes.valores ? c.valoresEnviados : undefined
   const anexos = c.anexosVendedor ?? []
   // status repetidos em seguida (ida e volta registrada duas vezes) aparecem uma vez só
   const andamento = c.statusHistory.map((h) => h.status).filter((s, i, todos) => i === 0 || s !== todos[i - 1])
-  const itensPedidos = c.itensPreRegistro.length > 0 ? c.itensPreRegistro : c.itensDaCotacao
+  const itensPedidos = itensDaLista(c)
+  const mudouDepois = !!v && partes.itens && mudouDepoisDoEnvio(itensPedidos, v)
   const producao = [...new Set(c.previsoesDeProducao)].sort()
   const previsoesEntrega = [...new Set(c.entregas.filter((e) => !e.entregueEm && e.previsaoEntrega).map((e) => e.previsaoEntrega))].sort()
   const entregue = c.entregas.length > 0 && c.entregas.every((e) => e.entregueEm)
@@ -288,7 +339,7 @@ function CartaoCotacao({
     <article className="card !p-0" aria-label={`Cotação ${c.codigo}`}>
       <button
         type="button"
-        onClick={() => setAberto((a) => !a)}
+        onClick={() => !formulario && setAberto((a) => !a)}
         aria-expanded={aberto}
         className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left"
       >
@@ -316,6 +367,9 @@ function CartaoCotacao({
             {partes.quemCota && <Dado rotulo="Quem está cotando" valor={c.status !== 'PENDENTE' && c.responsavelStatus ? c.responsavelStatus : 'ainda ninguém'} />}
             <Dado rotulo="Registrada por" valor={c.criadoPor || '—'} />
           </div>
+          {formulario}
+          {!formulario && (
+          <>
           {c.observacao && (
             <div>
               <p className="field-label">Observação</p>
@@ -323,37 +377,47 @@ function CartaoCotacao({
             </div>
           )}
 
-          {partes.valores && (
-          <section aria-label="Valores">
-            <p className="field-label">Valores</p>
-            {v ? (
-              <>
-                <div className="overflow-x-auto rounded-lg border border-ink-100">
-                  <table className="w-full text-xs">
-                    <thead className="bg-ink-50 text-left text-ink-500">
-                      <tr>
-                        <th className="px-2 py-1.5 font-medium">Referência</th>
-                        <th className="px-2 py-1.5 font-medium">Descrição</th>
-                        <th className="px-2 py-1.5 font-medium">Marca</th>
-                        <th className="px-2 py-1.5 font-medium">Entrega</th>
-                        <th className="px-2 py-1.5 text-right font-medium">Qtd</th>
-                        <th className="px-2 py-1.5 text-right font-medium">Vlr unt</th>
-                        <th className="px-2 py-1.5 text-right font-medium">Vlr total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-ink-100">
-                      {v.itens.map((i, n) => (
-                        <tr key={n}>
-                          <td className="whitespace-nowrap px-2 py-1.5 font-mono">{i.referencia || '—'}</td>
-                          <td className="px-2 py-1.5">{i.descricao}</td>
-                          <td className="px-2 py-1.5">{i.marca}</td>
-                          <td className="px-2 py-1.5">{i.entrega}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums">{i.quantidade}</td>
-                          <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">{formatCurrency(i.valorUnitario)}</td>
-                          <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">{formatCurrency(i.valorTotal)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
+          {(partes.itens || v) && (
+          <section aria-label="Itens">
+            <p className="field-label">{v ? `Itens com marca, prazo e valores de venda (${v.itens.length})` : `Itens pedidos (${itensPedidos.length})`}</p>
+            {(v ? v.itens.length : itensPedidos.length) === 0 ? (
+              <p className="text-xs text-ink-400">Nenhum item.</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-ink-100">
+                <table className="w-full text-xs">
+                  <thead className="bg-ink-50 text-left text-ink-500">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">Código</th>
+                      <th className="px-2 py-1.5 font-medium">Descrição</th>
+                      {v && <th className="px-2 py-1.5 font-medium">Marca</th>}
+                      {v && <th className="px-2 py-1.5 font-medium">Prazo</th>}
+                      <th className="px-2 py-1.5 text-right font-medium">Qtd</th>
+                      {v && <th className="px-2 py-1.5 text-right font-medium">Vlr unt</th>}
+                      {v && <th className="px-2 py-1.5 text-right font-medium">Vlr total</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-ink-100">
+                    {v
+                      ? v.itens.map((i, n) => (
+                          <tr key={n}>
+                            <td className="whitespace-nowrap px-2 py-1.5 font-mono">{i.referencia || '—'}</td>
+                            <td className="px-2 py-1.5">{i.descricao}</td>
+                            <td className="px-2 py-1.5">{i.marca || '—'}</td>
+                            <td className="px-2 py-1.5">{i.entrega || '—'}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{i.quantidade}</td>
+                            <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">{formatCurrency(i.valorUnitario)}</td>
+                            <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">{formatCurrency(i.valorTotal)}</td>
+                          </tr>
+                        ))
+                      : itensPedidos.map((i, n) => (
+                          <tr key={n}>
+                            <td className="whitespace-nowrap px-2 py-1.5 font-mono text-ink-600">{i.referencia || i.interno || '—'}</td>
+                            <td className="px-2 py-1.5 text-ink-800">{i.descricao}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-ink-600">{i.quantidade}</td>
+                          </tr>
+                        ))}
+                  </tbody>
+                  {v && (
                     <tfoot>
                       <tr className="border-t border-ink-200 font-semibold">
                         <td colSpan={6} className="px-2 py-1.5 text-right">
@@ -362,55 +426,59 @@ function CartaoCotacao({
                         <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">{formatCurrency(v.total)}</td>
                       </tr>
                     </tfoot>
-                  </table>
-                </div>
+                  )}
+                </table>
+              </div>
+            )}
+            {v ? (
+              <>
                 {/* quando foi enviada (e quando mudou) não aparece pro vendedor — só se os valores foram atualizados */}
                 <p className="mt-1 text-xs text-ink-400">
                   Valores que a equipe enviou{v.atualizada || v.atualizadoEm ? ' · valores atualizados pela equipe' : ''}
                 </p>
+                {mudouDepois && (
+                  <details className="mt-1 text-xs text-amber-800">
+                    <summary className="cursor-pointer">Os itens mudaram depois do envio: os valores acima são os do envio (a equipe já foi avisada).</summary>
+                    <ul className="mt-1 space-y-0.5 text-ink-700" aria-label="Itens pedidos agora">
+                      {itensPedidos.map((i, n) => (
+                        <li key={n}>
+                          <span className="font-mono">{i.referencia || i.interno || '—'}</span> {i.descricao} · qtd {i.quantidade}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setPlanilhaAberta(true)}
+                    onClick={() => setJanela({ formato: c.planilhaCliente ? 'cliente' : 'padrao' })}
                     className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:bg-ink-50"
                   >
                     Ver em planilha
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPlanilhaAberta(true)}
+                    onClick={() => setJanela({ formato: 'texto' })}
+                    className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:bg-ink-50"
+                  >
+                    Ver em texto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setJanela({})}
                     className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-semibold text-surface transition hover:opacity-90"
                   >
                     Compartilhar
                   </button>
                 </div>
-                {planilhaAberta && (
+                {janela && (
                   <Suspense fallback={null}>
-                    <PlanilhaDoVendedor c={c} valores={v} onFechar={() => setPlanilhaAberta(false)} />
+                    <PlanilhaDoVendedor c={c} valores={v} formatoInicial={janela.formato} onFechar={() => setJanela(null)} />
                   </Suspense>
                 )}
               </>
             ) : (
-              <p className="text-xs text-ink-400">Os valores aparecem aqui quando a cotação for enviada.</p>
-            )}
-          </section>
-          )}
-
-          {partes.itens && (
-          <section aria-label="Itens pedidos">
-            <p className="field-label">Itens pedidos ({itensPedidos.length})</p>
-            {itensPedidos.length === 0 ? (
-              <p className="text-xs text-ink-400">Nenhum item.</p>
-            ) : (
-              <ul className="divide-y divide-ink-100 rounded-lg border border-ink-100 text-xs">
-                {itensPedidos.map((i, n) => (
-                  <li key={n} className="flex flex-wrap gap-x-3 px-2 py-1.5">
-                    <span className="font-mono text-ink-600">{i.referencia || i.interno || '—'}</span>
-                    <span className="min-w-0 flex-1 text-ink-800">{i.descricao}</span>
-                    <span className="tabular-nums text-ink-600">qtd {i.quantidade}</span>
-                  </li>
-                ))}
-              </ul>
+              partes.valores && <p className="mt-1 text-xs text-ink-400">Marca, prazo e valores de venda aparecem aqui quando a cotação for enviada.</p>
             )}
           </section>
           )}
@@ -497,18 +565,40 @@ function CartaoCotacao({
             </section>
           )}
 
-          {onEditar && (
-            <button
-              type="button"
-              onClick={onEditar}
-              className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:bg-ink-50"
-            >
-              Alterar esta cotação
-            </button>
+          {/* do PEDIDO DE COMPRA em diante, só a equipe mexe (o servidor também recusa) */}
+          {!podeAlterar(c) ? (
+            <p className="text-xs text-ink-500">🔒 A cotação já chegou ao Pedido de Compra: daqui em diante não dá mais pra alterar. Fale com quem está cotando.</p>
+          ) : (
+            onEditar && (
+              <button
+                type="button"
+                onClick={onEditar}
+                className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:bg-ink-50"
+              >
+                Alterar esta cotação
+              </button>
+            )
+          )}
+          </>
           )}
         </div>
       )}
     </article>
+  )
+}
+
+/** Marca, prazo e valor que a equipe enviou pro item — embaixo da linha dele no formulário. */
+function ValorDoItem({ valores, item, n }: { valores?: ValoresParaOVendedor; item: ItemPedido; n: number }) {
+  if (!valores) return null
+  const v = valorDoItem(valores, item)
+  if (!v) {
+    if (!itemTemDados(item)) return null
+    return <p className="col-span-2 -mt-1 text-[11px] text-ink-400 sm:col-span-5">Sem valor enviado pra esse item ainda.</p>
+  }
+  return (
+    <p className="col-span-2 -mt-1 text-[11px] text-ink-600 sm:col-span-5" aria-label={`Valor enviado do item ${n + 1}`}>
+      Marca: {v.marca || '—'} · Prazo: {v.entrega || '—'} · {formatCurrency(v.valorUnitario)} cada · total {formatCurrency(v.valorTotal)}
+    </p>
   )
 }
 
@@ -521,11 +611,13 @@ function Dado({ rotulo, valor }: { rotulo: string; valor: string }) {
   )
 }
 
-/** Registrar uma cotação nova ou alterar uma das minhas. */
+/** Registrar uma cotação nova ou alterar uma das minhas (no próprio cartão dela, com tudo que ela já tem). */
 function FormularioCotacao({
   cotacao,
   formas,
   previa,
+  valores,
+  embutido = false,
   onCancelar,
   onSalva,
 }: {
@@ -534,6 +626,10 @@ function FormularioCotacao({
   formas: Record<FormaDeImportar, boolean>
   /** Visualização do Max: tudo funciona, mas nada é salvo. */
   previa: boolean
+  /** Os valores enviados (marca, prazo e valor de cada item aparecem junto do item). */
+  valores?: ValoresParaOVendedor
+  /** Dentro do cartão da cotação (sem a moldura própria). */
+  embutido?: boolean
   onCancelar: () => void
   onSalva: (mensagem: string) => Promise<void>
 }) {
@@ -541,7 +637,11 @@ function FormularioCotacao({
   const [maquina, setMaquina] = useState(cotacao?.maquina ?? '')
   const [data, setData] = useState(dataParaCampo(cotacao?.dataSolicitacao ?? (cotacao ? undefined : Date.now())))
   const [observacao, setObservacao] = useState(cotacao?.observacao ?? '')
-  const [itens, setItens] = useState<ItemPedido[]>(() => (cotacao && cotacao.itensPreRegistro.length > 0 ? cotacao.itensPreRegistro : [itemVazio()]))
+  // os itens que a cotação já tem — os que ele mandou ou os que a equipe lançou na precificação
+  const [itens, setItens] = useState<ItemPedido[]>(() => {
+    const atuais = cotacao ? itensDaLista(cotacao) : []
+    return atuais.length > 0 ? atuais.map((i) => ({ ...i })) : [itemVazio()]
+  })
   const [anexos, setAnexos] = useState<ArquivoParaAnexar[]>([])
   const [planilha, setPlanilha] = useState<{ nomeArquivo: string; conteudoBase64: string } | null>(null)
   const [importados, setImportados] = useState<string[]>([])
@@ -604,9 +704,12 @@ function FormularioCotacao({
   }
 
   return (
-    <section className="card space-y-4" aria-label={cotacao ? `Alterar a cotação ${cotacao.codigo}` : 'Nova cotação'}>
+    <section
+      className={embutido ? 'space-y-4 rounded-lg border border-sky-200 bg-sky-50/40 p-3' : 'card space-y-4'}
+      aria-label={cotacao ? `Alterar a cotação ${cotacao.codigo}` : 'Nova cotação'}
+    >
       <div>
-        <h2 className="font-display text-lg font-semibold text-ink-900">{cotacao ? `Alterar a ${cotacao.codigo}` : 'Nova cotação'}</h2>
+        <h2 className={`font-display font-semibold text-ink-900 ${embutido ? 'text-base' : 'text-lg'}`}>{cotacao ? `Alterando a ${cotacao.codigo}` : 'Nova cotação'}</h2>
         {cotacao && <p className="text-xs text-ink-500">O que você mudar fica registrado na cotação, e quem está cotando recebe um aviso.</p>}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -697,6 +800,7 @@ function FormularioCotacao({
               >
                 ✕
               </button>
+              <ValorDoItem valores={valores} item={i} n={n} />
             </div>
           ))}
         </div>

@@ -37,7 +37,7 @@ export function PreviaPlanilhaCliente({ resultado, gerada = false }: { resultado
         {gerada
           ? `Molde padrão com ${resultado.itensAtualizados} item(ns) da cotação. O que o site não sabe (endereço, CPF/CNPJ, contato) fica em branco: baixe pra preencher.`
           : resultado.itensAtualizados > 0
-            ? `${resultado.itensAtualizados} item(ns) atualizado(s) com valor e prazo.`
+            ? `${resultado.itensAtualizados} item(ns) atualizado(s) com marca, prazo e valor.`
             : resultado.itensComValorNaPlanilha.length > 0
               ? 'Nenhum item preenchido pelo site — todos os que bateram já tinham valor na planilha.'
               : 'Nenhum item da cotação bateu com a Referência de alguma linha dessa planilha.'}

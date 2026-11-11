@@ -180,6 +180,13 @@ function arquivarItensExcluidos(
   return [...anteriores, ...novos]
 }
 
+/** O que entrou do vendedor nos itens ao abrir a cotação (ver itensDoVendedor.ts): as alterações dele
+ * (ids) e se os itens pedidos viraram os da precificação. */
+export interface OpcoesDoVendedor {
+  alteracoes: string[]
+  doPedido: boolean
+}
+
 export async function saveQuote(
   atorAdmin: string,
   vendedor: string,
@@ -196,6 +203,8 @@ export async function saveQuote(
     itensRemovidos?: QuoteItem[]
     /** Observação da cotação — omitida, fica a que já estava salva. */
     observacao?: string
+    /** O que o vendedor pediu/mudou e entrou nos itens ao abrir a cotação (ver itensDoVendedor.ts). */
+    doVendedor?: OpcoesDoVendedor
   },
 ): Promise<QuoteRecord> {
   const gravar = () =>
@@ -214,7 +223,7 @@ async function gravarCotacao(
   existingId: string | undefined,
   empresaId: string | undefined,
   dataSolicitacao: number | undefined,
-  opcoes: { itensRemovidos?: QuoteItem[]; observacao?: string } | undefined,
+  opcoes: { itensRemovidos?: QuoteItem[]; observacao?: string; doVendedor?: OpcoesDoVendedor } | undefined,
 ): Promise<QuoteRecord> {
   const now = Date.now()
   const precoVendaTotalGeral = items.reduce(
@@ -233,6 +242,12 @@ async function gravarCotacao(
   }
 
   const codigo = base?.codigo || (await proximoCodigoCotacao())
+  // as alterações do vendedor que entraram nos itens salvos agora — as que chegaram depois de a cotação
+  // ser aberta continuam esperando (entram na próxima vez que ela for aberta)
+  const aplicadas = new Set(opcoes?.doVendedor?.alteracoes ?? [])
+  const alteracoesVendedor = base?.alteracoesVendedor?.map((a) =>
+    aplicadas.has(a.id) && !a.aplicadaEm ? { ...a, aplicadaEm: now, aplicadaPor: atorAdmin } : a,
+  )
 
   const record: QuoteRecord = {
     // tudo que essa função não gerencia (frete por transportadora/fornecedor salvo na aba Frete,
@@ -248,7 +263,9 @@ async function gravarCotacao(
     maquina,
     empresaId: empresaId ?? base?.empresaId,
     items,
-    itensPreRegistro: base?.itensPreRegistro ?? [],
+    // os itens pedidos pelo vendedor viraram os itens da precificação: a lista dele passa a ser essa
+    itensPreRegistro: opcoes?.doVendedor?.doPedido ? [] : (base?.itensPreRegistro ?? []),
+    ...(alteracoesVendedor ? { alteracoesVendedor } : {}),
     planilhaOriginal: base?.planilhaOriginal,
     dataSolicitacao: dataSolicitacao ?? base?.dataSolicitacao,
     observacao: opcoes?.observacao !== undefined ? opcoes.observacao.trim() || undefined : base?.observacao,

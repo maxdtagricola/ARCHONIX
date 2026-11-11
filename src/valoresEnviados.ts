@@ -10,10 +10,11 @@ import type { ItemValorEnviado, QuoteItem, QuoteRecord, ValoresEnviados } from '
 
 /** Os itens como iriam pro vendedor agora (os mesmos valores da planilha do cliente). */
 export function itensParaOVendedor(items: QuoteItem[]): ItemValorEnviado[] {
-  return items.map(({ product, pricing }) => {
+  return items.map(({ id, product, pricing }) => {
     const { precoVendaTotal } = calculateItem(product, pricing)
     const quantidade = product.qtd || 0
     return {
+      id,
       marca: product.marca.trim(),
       entrega: product.prazoEntrega.trim(),
       referencia: product.referencia.trim() || product.interno.trim(),

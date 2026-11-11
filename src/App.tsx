@@ -13,8 +13,17 @@ import { DialogHost } from './components/DialogHost'
 import { lerRascunho, limparRascunho, salvarRascunho, type RascunhoCotacao } from './rascunhoCotacao'
 import { calculateItem, definirTabelasCustomizadas } from './calc/calculator'
 import { formatCurrency, formatDate, mesmoFornecedor, valoresDaCotacaoDoFornecedor } from './utils'
-import { atualizarValoresEnviados, buscarQuote, listQuotes, saveQuote, setPlanilhaOriginal, updateQuoteStatus } from './db/analysesRepo'
+import {
+  atualizarValoresEnviados,
+  buscarQuote,
+  listQuotes,
+  saveQuote,
+  setPlanilhaOriginal,
+  updateQuoteStatus,
+  type OpcoesDoVendedor,
+} from './db/analysesRepo'
 import { totalAtualParaOVendedor, valoresMudaram } from './valoresEnviados'
+import { aplicarItensDoVendedor } from './itensDoVendedor'
 import { perguntarSeReenviaAoVendedor } from './mudancaDeStatus'
 import { AvisoAlteracoesVendedor } from './components/AvisoAlteracoesVendedor'
 import { lerPlanilhaCliente } from './db/planilhasClienteRepo'
@@ -303,6 +312,8 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
   // na tela, que só vão pro arquivo no próximo "Salvar cotação" — os dois dá pra trazer de volta
   const [itensExcluidosSalvos, setItensExcluidosSalvos] = useState<ItemExcluidoCotacao[]>([])
   const [itensExcluidosPendentes, setItensExcluidosPendentes] = useState<ItemExcluidoCotacao[]>([])
+  // o que o vendedor pediu/mudou e entrou nos itens ao abrir a cotação — vai junto no próximo salvar
+  const [doVendedor, setDoVendedor] = useState<OpcoesDoVendedor | undefined>(undefined)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
   const [pricingGlobal, setPricingGlobalState] = useState<PricingGlobal>(DEFAULT_PRICING_GLOBAL)
   const [tabelasVersion, setTabelasVersion] = useState(0)
@@ -449,6 +460,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
     setActiveResponsavel(r.activeResponsavel)
     setPlanilhaOriginalState(r.planilhaOriginal)
     setItensExcluidosPendentes([])
+    setDoVendedor(undefined)
     setItensExcluidosSalvos([])
     buscarQuote(r.editingQuoteId)
       .then((registro) => setItensExcluidosSalvos(registro?.itensExcluidos ?? []))
@@ -730,11 +742,12 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
         editingQuoteId,
         empresaId,
         dataSolicitacao,
-        { itensRemovidos: itensExcluidosPendentes.map((e) => e.item) },
+        { itensRemovidos: itensExcluidosPendentes.map((e) => e.item), doVendedor },
       )
       setEditingQuoteId(record.id)
       setItensExcluidosSalvos(record.itensExcluidos ?? [])
       setItensExcluidosPendentes([])
+      setDoVendedor(undefined)
       setHistoryRefreshKey((k) => k + 1)
       limparRascunho()
       // mantém o catálogo de Produtos (e o "mais barato já cotado" de cada item) em dia sem depender
@@ -796,6 +809,7 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
     setDataSolicitacao(undefined)
     setItensExcluidosSalvos([])
     setItensExcluidosPendentes([])
+    setDoVendedor(undefined)
     setPlanilhaOriginalState(undefined)
     limparRascunho()
     setSalvoInalterado(false)
@@ -805,10 +819,14 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
 
   function handleLoad(record: QuoteRecord) {
     limparRascunho()
-    const loadedItems =
+    const gravados =
       record.items.length > 0
         ? record.items.map((item) => ({ ...item, pricing: { ...item.pricing, ...pricingGlobal } }))
         : [criarItemComGlobais()]
+    // o que o vendedor pediu ou mudou nos itens e ainda não foi salvo na cotação entra agora
+    const doVendedorAgora = aplicarItensDoVendedor(record, gravados, criarItemComGlobais)
+    const loadedItems = doVendedorAgora?.items ?? gravados
+    const mudouPeloVendedor = !!doVendedorAgora && doVendedorAgora.resumo.length > 0
     setVendedor(record.vendedor)
     setTipoReferencia(record.tipoReferencia)
     setCliente(record.cliente)
@@ -823,12 +841,22 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
     setActiveCreatedAt(record.createdAt)
     setDataSolicitacao(record.dataSolicitacao)
     setItensExcluidosSalvos(record.itensExcluidos ?? [])
-    setItensExcluidosPendentes([])
+    setItensExcluidosPendentes(
+      (doVendedorAgora?.retirados ?? []).map((item) => ({ item, excluidoEm: Date.now(), excluidoPor: `vendedor ${record.vendedor}` })),
+    )
+    setDoVendedor(doVendedorAgora ? { alteracoes: doVendedorAgora.alteracoes, doPedido: doVendedorAgora.doPedido } : undefined)
     setPlanilhaOriginalState(record.planilhaOriginal)
     setSalvoInalterado(false)
     setCotacaoRecemSalva(false)
-    setTemAlteracoesNaoSalvas(false)
+    setTemAlteracoesNaoSalvas(mudouPeloVendedor)
     changeTab('dashboard')
+    if (mudouPeloVendedor) {
+      void avisar(
+        `Itens do vendedor ${record.vendedor} na ${record.codigo || 'cotação'}:\n\n• ${doVendedorAgora.resumo.join('\n• ')}\n\n` +
+          'Já estão na tela. Confira e salve a cotação pra gravar.',
+        { titulo: 'Itens do vendedor' },
+      )
+    }
   }
 
   async function handleCreateQuote(

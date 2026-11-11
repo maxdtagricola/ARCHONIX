@@ -85,10 +85,10 @@ const CABECALHOS = {
     /^atendid[ao]s?$/,
   ],
   quantidade: [/^quant(idade)?$/, /^quant/, /^qtd[e]?$/, /^qtde?\b/, /^qt$/],
-  entrega: [/^entrega$/, /^prazo( de)? entrega$/, /^prazo$/],
+  entrega: [/^entrega$/, /^prazo( de)? entrega\b/, /^(data|dt|previsao|prev)( de| da)? entrega\b/, /^entrega\b/, /^prazo$/, /^prazo (em )?dias$/],
   valorUnitario: [/^vlr unt$/, /^vlr unt/, /^valor unt/, /^vlr unit/, /^valor unit/, /^v unit/, /^vl unit/, /^preco unit/, /^unitario$/, /^preco$/, /^valor$/],
   valorTotal: [/^vlr total$/, /^vlr total/, /^valor total/, /^v total/, /^vl total/, /^total$/, /^subtotal$/],
-  marca: [/^marca$/, /^fabricante$/],
+  marca: [/^marca$/, /^fabricante$/, /^marca\b/, /^fabricante\b/],
   ncm: [/^ncm$/, /^ncm\b/, /^(cod|codigo) ncm$/, /^classif(icacao)? fiscal$/, /^class fiscal$/],
   observacao: [/^obs$/, /^obs\b/, /^observac/],
 } satisfies Record<string, RegExp[]>

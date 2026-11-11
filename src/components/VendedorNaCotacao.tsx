@@ -128,6 +128,14 @@ export function VendedorNaCotacao({ r, currentAdmin }: { r: QuoteRecord; current
                       </li>
                     ))}
                   </ul>
+                  {/* os itens mudados entram na Precificação ao abrir a cotação (itensDoVendedor.ts) */}
+                  {a.itens && (
+                    <p className={`mt-0.5 text-[11px] ${a.aplicadaEm ? 'text-emerald-700' : 'text-amber-800'}`}>
+                      {a.aplicadaEm
+                        ? `✓ Itens salvos na precificação em ${formatDate(a.aplicadaEm)}${a.aplicadaPor ? ` por ${a.aplicadaPor}` : ''}`
+                        : 'Itens ainda não salvos na precificação: entram quando a cotação for aberta na Precificação.'}
+                    </p>
+                  )}
                 </li>
               )
             })}

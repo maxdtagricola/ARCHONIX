@@ -8,12 +8,15 @@ import { gerarPdfCotacaoCliente } from '../cotacaoParaCliente'
 import { calculateItem } from '../calc/calculator'
 import { avisar } from '../dialogs'
 import { formatCurrency } from '../utils'
+import { nomeDoTexto, textoDaCotacao } from '../textoDaCotacao'
+import { itensParaOVendedor } from '../valoresEnviados'
+import { BotoesDoTexto, PreviaDoTexto } from './TextoDaCotacao'
 import type { PlanilhaClienteArquivo } from '../db/planilhasClienteRepo'
 import type { QuoteItem } from '../types'
 
 const MIME_PDF = 'application/pdf'
 
-type Formato = 'importada' | 'padrao' | 'pdf'
+type Formato = 'importada' | 'padrao' | 'pdf' | 'texto'
 
 export function EnvioCotacaoModal({
   items,
@@ -51,7 +54,13 @@ export function EnvioCotacaoModal({
   const nomePdf = `cotacao-${(cliente || 'cliente').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`
   const nomePadrao = nomePlanilhaPadrao({ cliente, maquina })
   const nomeImportada = planilhaCliente?.nomeArquivo ?? ''
-  const nomeDoArquivo = formato === 'pdf' ? nomePdf : formato === 'importada' ? nomeImportada : nomePadrao
+  // o mesmo texto que o vendedor manda (com os valores de agora, que são os que vão pro cliente)
+  const texto = useMemo(() => {
+    const itens = itensParaOVendedor(items)
+    return textoDaCotacao({ codigo, cliente, maquina }, { itens, total: itens.reduce((s, i) => s + i.valorTotal, 0) })
+  }, [items, codigo, cliente, maquina])
+  const nomeDoArquivo =
+    formato === 'pdf' ? nomePdf : formato === 'importada' ? nomeImportada : formato === 'texto' ? nomeDoTexto({ codigo, cliente, maquina }) : nomePadrao
 
   const montar = useCallback(
     () =>
@@ -61,7 +70,7 @@ export function EnvioCotacaoModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [formato, items, cliente, maquina, vendedor],
   )
-  const { resultado, erro } = usePlanilhaMontada(formato === 'pdf' ? null : montar)
+  const { resultado, erro } = usePlanilhaMontada(formato === 'pdf' || formato === 'texto' ? null : montar)
 
   const mime = formato === 'pdf' ? MIME_PDF : (resultado?.arquivo.type ?? '')
   const podeCompartilharArquivo = useMemo(() => !!mime && suportaCompartilharArquivo(mime), [mime])
@@ -95,6 +104,7 @@ export function EnvioCotacaoModal({
     ...(planilhaCliente ? [{ id: 'importada' as const, rotulo: 'Planilha do cliente' }] : []),
     { id: 'padrao', rotulo: 'Planilha padrão' },
     { id: 'pdf', rotulo: 'Resumo em PDF' },
+    { id: 'texto', rotulo: 'Texto' },
   ]
   const semArquivo = formato !== 'pdf' && !resultado
 
@@ -125,7 +135,9 @@ export function EnvioCotacaoModal({
           ))}
         </div>
 
-        {formato === 'pdf' ? (
+        {formato === 'texto' ? (
+          <PreviaDoTexto texto={texto} />
+        ) : formato === 'pdf' ? (
           <div className="flex-1 overflow-auto rounded-xl border border-ink-100 my-2">
             <table className="w-full text-sm border-collapse">
               <thead>
@@ -166,12 +178,21 @@ export function EnvioCotacaoModal({
           <p className="text-sm text-ink-400 py-4">Montando a planilha…</p>
         )}
 
-        <div className="border-t border-ink-100 pt-3">
+        <div className="mt-3 border-t border-ink-100 pt-3">
           <p className="field-label mb-1">Enviar ao cliente</p>
           <p className="text-[11px] text-ink-400 mb-2">
-            Ao compartilhar ou mandar por e-mail, o status da cotação muda pra "ENVIADO". Pra ajustar algo antes, baixe o arquivo, edite
-            no Excel e encaminhe; depois clique em "Marcar como enviada".
+            {formato === 'texto'
+              ? 'Ao compartilhar, mandar pelo WhatsApp ou por e-mail, o status da cotação muda pra "ENVIADO". Copiando o texto pra colar na conversa, clique depois em "Marcar como enviada".'
+              : 'Ao compartilhar ou mandar por e-mail, o status da cotação muda pra "ENVIADO". Pra ajustar algo antes, baixe o arquivo, edite no Excel e encaminhe; depois clique em "Marcar como enviada".'}
           </p>
+          {formato === 'texto' ? (
+            <div className="flex flex-wrap items-start gap-2">
+              <BotoesDoTexto texto={texto} titulo={titulo} nomeArquivo={nomeDoArquivo} mensagemCurta={mensagem} onEnviado={onEnviado} />
+              <Button variant="ghost" onClick={onEnviado}>
+                Marcar como enviada
+              </Button>
+            </div>
+          ) : (
           <div className="flex flex-wrap gap-2">
             {podeCompartilharArquivo && (
               <Button variant="primary" onClick={handleCompartilhar} disabled={enviando || semArquivo}>
@@ -188,7 +209,8 @@ export function EnvioCotacaoModal({
               Marcar como enviada
             </Button>
           </div>
-          {!podeCompartilharArquivo && (
+          )}
+          {formato !== 'texto' && !podeCompartilharArquivo && (
             <p className="text-[11px] text-ink-400 mt-2">
               Seu navegador não compartilha o arquivo direto pro WhatsApp — baixe o arquivo acima e anexe manualmente.
             </p>

@@ -1,5 +1,6 @@
 import { baixarArquivoDoServidor, chamarServidor, dbGetAll, STORE_ANALISES } from '../db/db'
-import type { AlteracaoVendedor, AnexoVendedor, ItemValorEnviado, QuoteStatus } from '../types'
+import { antesDoPedidoDeCompra } from '../itensDoVendedor'
+import type { AlteracaoVendedor, AnexoVendedor, ItemPedidoVendedor, ItemValorEnviado, QuoteStatus } from '../types'
 
 /** Os valores enviados como o vendedor recebe: sem quando nem quem enviou (servidores de antes
  * mandavam as datas — a tela não mostra). */
@@ -17,13 +18,7 @@ export interface ValoresParaOVendedor {
 // nome dele, e sem custos, fornecedores, margens, frete, pedido de compra ou faturamento. Os valores,
 // só os que mandamos pra ele ao enviar (valoresEnviados).
 
-export interface ItemPedido {
-  id: string
-  interno: string
-  referencia: string
-  descricao: string
-  quantidade: number
-}
+export type ItemPedido = ItemPedidoVendedor
 
 export interface CotacaoDoVendedor {
   id: string
@@ -35,14 +30,18 @@ export interface CotacaoDoVendedor {
   observacao: string
   dataSolicitacao?: number
   status: QuoteStatus
+  /** Ainda dá pra alterar (até antes do PEDIDO DE COMPRA — o servidor é quem decide; os de antes não mandam). */
+  podeAlterar?: boolean
   /** Quem está cotando (vazio enquanto PENDENTE). */
   responsavelStatus: string
   /** Só a sequência dos status — sem as datas (servidores de antes mandavam; a tela não mostra). */
   statusHistory: { status: QuoteStatus; changedAt?: number }[]
-  /** Os itens que o vendedor pediu (é o que ele altera). */
+  /** A lista de itens dele, a que ele vê e altera: a da precificação (com o que ele mudou e a equipe
+   * ainda não salvou) ou, antes de a equipe precificar, a que ele mandou. Servidores de antes mandavam
+   * aqui só a que ele mandou — a da precificação vinha em `itensDaCotacao`. */
   itensPreRegistro: ItemPedido[]
-  /** Os itens já na precificação — só o que identifica cada um. */
-  itensDaCotacao: Omit<ItemPedido, 'id'>[]
+  /** (servidores de antes) Os itens já na precificação — só o que identifica cada um. */
+  itensDaCotacao: (Omit<ItemPedido, 'id'> & { id?: string })[]
   valoresEnviados?: ValoresParaOVendedor
   /** Previsões de a produção ficar pronta ("AAAA-MM-DD"). */
   previsoesDeProducao: string[]
@@ -74,6 +73,18 @@ export interface DadosDaCotacaoDoVendedor {
   anexosNovos?: ArquivoParaAnexar[]
   /** A planilha do cliente, pra equipe devolver preenchida (a mesma das que ela importa). */
   planilhaCliente?: { nomeArquivo: string; conteudoBase64: string }
+}
+
+/** Ainda dá pra ele alterar? A partir do PEDIDO DE COMPRA, não. */
+export function podeAlterar(c: Pick<CotacaoDoVendedor, 'podeAlterar' | 'status'>): boolean {
+  return c.podeAlterar ?? antesDoPedidoDeCompra(c.status)
+}
+
+/** A lista de itens dele (ver `itensPreRegistro`) — com servidor de antes, a da precificação quando ele
+ * não mandou nenhuma. */
+export function itensDaLista(c: Pick<CotacaoDoVendedor, 'itensPreRegistro' | 'itensDaCotacao'>): ItemPedido[] {
+  if (c.itensPreRegistro.length > 0) return c.itensPreRegistro
+  return c.itensDaCotacao.map((i, n) => ({ ...i, id: i.id || `precificacao-${n + 1}` }))
 }
 
 export async function listarMinhasCotacoes(): Promise<CotacaoDoVendedor[]> {

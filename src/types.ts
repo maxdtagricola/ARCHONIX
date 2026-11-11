@@ -538,6 +538,8 @@ export interface MedidasCargaFrete {
 
 /** Um item como foi pro vendedor — as mesmas colunas da planilha do cliente (ver planilhaClientePadrao). */
 export interface ItemValorEnviado {
+  /** O item da cotação (os enviados antes não têm). */
+  id?: string
   marca: string
   entrega: string
   referencia: string
@@ -571,6 +573,15 @@ export interface AnexoVendedor {
   por: string
 }
 
+/** Um item como o vendedor pede (e vê): só o que identifica o item. */
+export interface ItemPedidoVendedor {
+  id: string
+  interno: string
+  referencia: string
+  descricao: string
+  quantidade: number
+}
+
 /** Uma alteração do vendedor: o que mudou, campo por campo (texto pronto do servidor). */
 export interface AlteracaoVendedor {
   id: string
@@ -578,6 +589,12 @@ export interface AlteracaoVendedor {
   /** Nome do vendedor no app (quem alterou). */
   por: string
   campos: { campo: string; antes: string; depois: string }[]
+  /** O que mudou nos itens (o id é o do item da Precificação ou da lista que ele mandou) — entra na
+   * Precificação quando alguém abre a cotação (ver itensDoVendedor.ts). Servidores de antes não mandam. */
+  itens?: { adicionados: ItemPedidoVendedor[]; alterados: ItemPedidoVendedor[]; retirados: string[] }
+  /** Quando quem cota salvou a cotação já com essa alteração dos itens (e quem). */
+  aplicadaEm?: number
+  aplicadaPor?: string
   /** Quem estava com a cotação na hora — é quem recebe o aviso; vazio = ninguém (todos veem). */
   para?: string
   /** Quem já viu o aviso (nomes no app). */
