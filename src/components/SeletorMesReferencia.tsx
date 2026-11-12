@@ -19,10 +19,12 @@ export function SeletorMesReferencia({
   meses,
   valor,
   onChange,
+  textoVazio = '— usar o período acima —',
 }: {
   meses: string[]
   valor: string
   onChange: (mesKey: string) => void
+  textoVazio?: string
 }) {
   return (
     <label className="block">
@@ -32,7 +34,7 @@ export function SeletorMesReferencia({
         value={valor}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">— usar o período acima —</option>
+        <option value="">{textoVazio}</option>
         {meses.map((m) => (
           <option key={m} value={m}>
             {labelDoMes(m)}

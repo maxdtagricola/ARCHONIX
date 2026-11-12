@@ -300,6 +300,41 @@
   .planilha-comparar .planilha-soltar-depois {
     box-shadow: inset -3px 0 0 rgb(var(--ink-900));
   }
+  /* Dashboard: os cartões entram subindo, um depois do outro (--atraso em cada um), e as linhas do
+   * gráfico se desenham da esquerda pra direita. Sem nada disso pra quem pediu menos movimento. */
+  @keyframes surgir {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .surgir {
+    animation: surgir 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: var(--atraso, 0ms);
+  }
+  @keyframes desenhar {
+    from {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 0;
+    }
+  }
+  .linha-desenhar {
+    animation: desenhar 1.2s ease-out 0.3s backwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .surgir,
+    .linha-desenhar {
+      animation: none;
+    }
+  }
   .planilha-preview table {
     @apply w-full border-collapse text-xs text-ink-800;
   }

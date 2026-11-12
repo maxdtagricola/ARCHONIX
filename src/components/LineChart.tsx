@@ -77,7 +77,7 @@ export function LineChart({
           const ultimoValor = data[data.length - 1]?.values[s.key] ?? 0
           return (
             <g key={s.key}>
-              <path d={path} fill="none" stroke={s.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              <path d={path} pathLength={1} className="linha-desenhar" fill="none" stroke={s.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
               {pontos.map((p, i) => (
                 <circle key={i} cx={p.x} cy={p.y} r={3} fill={s.color} stroke="rgb(var(--surface))" strokeWidth={1.5}>
                   <title>
