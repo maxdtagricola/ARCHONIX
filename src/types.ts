@@ -340,6 +340,7 @@ export type QuoteStatus =
   | 'EM TRANSPORTE'
   | 'CADASTRO DE PRODUTO'
   | 'PARCIALMENTE ENTREGUE'
+  | 'FATURADO PARCIALMENTE'
   | 'ENTREGUE'
   | 'CONFERIDO'
   | 'FATURADO'
@@ -358,6 +359,8 @@ export const QUOTE_STATUSES: QuoteStatus[] = [
   'EM TRANSPORTE',
   'CADASTRO DE PRODUTO',
   'PARCIALMENTE ENTREGUE',
+  // parte dos itens já faturada e o resto ainda a caminho: antes de ENTREGUE, pra continuar no transporte
+  'FATURADO PARCIALMENTE',
   'ENTREGUE',
   'CONFERIDO',
   'FATURADO',
@@ -440,6 +443,10 @@ export interface ItemFaturado {
   valorUnt: number
   registradoEm: number
   registradoPor: string
+  /** Nota fiscal de venda e data ("AAAA-MM-DD") em que este item foi faturado — o pedido pode ser faturado
+   * em partes, conforme os itens chegam. Faturados antes disso não têm: vale o da cotação. */
+  notaFiscal?: string
+  data?: string
 }
 
 /** Item que saiu de uma cotação — fica guardado no próprio registro dela, no servidor, com quem

@@ -3,10 +3,20 @@ import { Button } from '../components/ui/Basics'
 import { SelectField } from '../components/ui/Field'
 import { listQuotes, salvarFaturamento, updateQuoteStatus } from '../db/analysesRepo'
 import { corPadraoDoStatus, corTexto } from '../statusColors'
-import { formatCurrency } from '../utils'
+import { formatCurrency, formatDate } from '../utils'
 import { formatarNumeroBR, formatarNumeroCurtoBR, parseNumeroFlexivel } from '../numeros'
 import { custoFinal, precoPassado } from '../valoresDoPedido'
 import { avisar } from '../dialogs'
+import { estaACaminho } from '../avisosEntrega'
+import {
+  STATUS_FATURADO_PARCIALMENTE,
+  entregaDoItem,
+  notaEDataDaCotacao,
+  notaEDataDoItem,
+  partesFaturadas,
+  situacaoDoFaturamento,
+  type EntregaDoItem,
+} from '../faturamentoParcial'
 import { perguntarAntesDoStatus } from '../mudancaDeStatus'
 import { OpcoesDeStatus } from '../components/OpcoesDeStatus'
 import { nomeDoStatus, statusDe } from '../statusConfig'
@@ -17,7 +27,9 @@ import type { ItemFaturado, QuoteItem, QuoteRecord, QuoteStatus } from '../types
 // entregue": registra por quanto cada item foi faturado pro cliente e compara
 // com o preço de venda que foi passado na cotação, antes do pedido. O
 // faturado fica num campo próprio da cotação (itensFaturados), separado dos
-// itens — um não sobrescreve o outro, senão a comparação some.
+// itens — um não sobrescreve o outro, senão a comparação some. O pedido pode
+// ser faturado em partes, conforme os itens chegam (faturamentoParcial.ts):
+// cada item guarda a nota e a data dele, e o que falta segue no transporte.
 // -----------------------------------------------------------------------
 
 /** De PARCIALMENTE ENTREGUE em diante no fluxo (inclusive os criados depois dele): o que já tem o que faturar. */
@@ -30,6 +42,32 @@ function statusDoFaturamento(): string[] {
 interface FaturadoEmEdicao {
   qtd: string
   valorUnt: string
+  /** Nota e data ("AAAA-MM-DD") da parte em que o item foi faturado — vazias, vão as deste faturamento. */
+  nota: string
+  data: string
+}
+
+const VAZIO: FaturadoEmEdicao = { qtd: '', valorUnt: '', nota: '', data: '' }
+
+const diaBR = (iso: string) => (/^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split('-').reverse().join('/') : '')
+
+/** "Chegou 10/11" / "A caminho · previsão 14/11" / "Sem envio" — se o item já pode ser faturado. */
+function SeloEntrega({ entrega }: { entrega: EntregaDoItem }) {
+  if (entrega.situacao === 'entregue') {
+    return (
+      <span className="inline-flex whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+        Chegou{entrega.em ? ` ${formatDate(entrega.em).slice(0, 5)}` : ''}
+      </span>
+    )
+  }
+  if (entrega.situacao === 'caminho') {
+    return (
+      <span className="inline-flex whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800" title={entrega.notaFiscal ? `NF de compra ${entrega.notaFiscal}` : undefined}>
+        A caminho{entrega.previsao ? ` · prev. ${diaBR(entrega.previsao).slice(0, 5)}` : ''}
+      </span>
+    )
+  }
+  return <span className="whitespace-nowrap text-[11px] text-ink-400">Sem envio</span>
 }
 
 /** Itens que entraram no pedido de compra (cotação fechada com só alguns itens) — cotações de antes
@@ -54,10 +92,10 @@ function Margem({ valor, base }: { valor: number; base: number }) {
   )
 }
 
-function paraEdicao(f: ItemFaturado | undefined): FaturadoEmEdicao {
-  return f
-    ? { qtd: formatarNumeroCurtoBR(f.qtd, 3), valorUnt: formatarNumeroBR(f.valorUnt, 2) }
-    : { qtd: '', valorUnt: '' }
+function paraEdicao(cotacao: QuoteRecord, f: ItemFaturado | undefined): FaturadoEmEdicao {
+  if (!f) return VAZIO
+  const { nota, data } = notaEDataDoItem(cotacao, f)
+  return { qtd: formatarNumeroCurtoBR(f.qtd, 3), valorUnt: formatarNumeroBR(f.valorUnt, 2), nota, data }
 }
 
 /** Lê o que foi digitado — undefined quando o item ainda não foi faturado (nada preenchido). */
@@ -123,6 +161,7 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
   const [loading, setLoading] = useState(true)
   const [cotacaoId, setCotacaoId] = useState('')
   const [edicao, setEdicao] = useState<Record<string, FaturadoEmEdicao>>({})
+  // a nota e a data deste faturamento: vão pros itens faturados agora (os sem nota/data própria)
   const [notaFaturamento, setNotaFaturamento] = useState('')
   const [dataFaturamento, setDataFaturamento] = useState('')
   const [salvando, setSalvando] = useState(false)
@@ -162,17 +201,18 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
       return
     }
     const inicial: Record<string, FaturadoEmEdicao> = {}
-    for (const item of itensDoPedido(cotacao)) inicial[item.id] = paraEdicao(cotacao.itensFaturados?.[item.id])
+    for (const item of itensDoPedido(cotacao)) inicial[item.id] = paraEdicao(cotacao, cotacao.itensFaturados?.[item.id])
     setEdicao(inicial)
-    setNotaFaturamento(cotacao.notaFaturamento ?? '')
-    setDataFaturamento(cotacao.dataFaturamento ?? '')
+    // cada parte faturada já guarda a dela: os campos de cima começam vazios, pra próxima parte
+    setNotaFaturamento('')
+    setDataFaturamento('')
     setSalvo(false)
     setAlterado(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cotacao?.id, cotacao?.updatedAt])
 
   function patchEdicao(itemId: string, patch: Partial<FaturadoEmEdicao>) {
-    setEdicao((prev) => ({ ...prev, [itemId]: { ...(prev[itemId] ?? { qtd: '', valorUnt: '' }), ...patch } }))
+    setEdicao((prev) => ({ ...prev, [itemId]: { ...(prev[itemId] ?? VAZIO), ...patch } }))
     setAlterado(true)
   }
 
@@ -184,16 +224,19 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
     })
   }
 
-  function faturarTodosPeloPassado() {
+  /** Os que faltam (ou só os que já chegaram) pelo valor passado. */
+  function faturarPeloPassadoOsQueFaltam(soOsQueChegaram: boolean) {
     for (const item of itens) {
-      if (!lerFaturado(edicao[item.id])) faturarPeloPassado(item)
+      if (lerFaturado(edicao[item.id])) continue
+      if (soOsQueChegaram && cotacao && entregaDoItem(cotacao, item).situacao !== 'entregue') continue
+      faturarPeloPassado(item)
     }
   }
 
   const resumo = useMemo(() => resumir(itens, (item) => lerFaturado(edicao[item.id])), [itens, edicao])
 
-  async function handleSalvar() {
-    if (!cotacao) return
+  async function handleSalvar(): Promise<boolean> {
+    if (!cotacao) return false
     setSalvando(true)
     try {
       const agora = Date.now()
@@ -201,27 +244,43 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
       // podem perder o que tinham
       const itensFaturados: Record<string, ItemFaturado> = { ...(cotacao.itensFaturados ?? {}) }
       for (const item of itens) {
-        const lido = lerFaturado(edicao[item.id])
+        const emEdicao = edicao[item.id]
+        const lido = lerFaturado(emEdicao)
         const anterior = cotacao.itensFaturados?.[item.id]
         if (!lido) {
           delete itensFaturados[item.id]
           continue
         }
+        // sem nota/data própria, o item vai com as deste faturamento (os campos de cima)
+        const notaFiscal = emEdicao?.nota.trim() || notaFaturamento.trim()
+        const data = emEdicao?.data || dataFaturamento
+        const antes = anterior ? notaEDataDoItem(cotacao, anterior) : undefined
         const mudou = !anterior || anterior.qtd !== lido.qtd || Math.abs(anterior.valorUnt - lido.valorUnt) > 0.0001
         itensFaturados[item.id] = mudou
-          ? { ...lido, registradoEm: agora, registradoPor: currentAdmin }
-          : anterior
+          ? { ...lido, registradoEm: agora, registradoPor: currentAdmin, notaFiscal, data }
+          : { ...anterior, notaFiscal, data }
+        if (!mudou && antes && (antes.nota !== notaFiscal || antes.data !== data)) itensFaturados[item.id] = { ...itensFaturados[item.id], registradoEm: agora, registradoPor: currentAdmin }
       }
-      const atualizado = await salvarFaturamento(cotacao.id, { itensFaturados, notaFaturamento, dataFaturamento })
+      // na cotação ficam as notas de todas as partes e a data da última
+      const daCotacao = notaEDataDaCotacao(itensFaturados)
+      const atualizado = await salvarFaturamento(cotacao.id, { itensFaturados, notaFaturamento: daCotacao.nota, dataFaturamento: daCotacao.data })
       setQuotes((prev) => prev.map((q) => (q.id === atualizado.id ? atualizado : q)))
       setSalvo(true)
       setAlterado(false)
       setTimeout(() => setSalvo(false), 2500)
+      return true
     } catch (err) {
       void avisar(err instanceof Error ? err.message : 'Erro ao salvar no servidor.')
+      return false
     } finally {
       setSalvando(false)
     }
+  }
+
+  /** Muda o status salvando antes o que foi preenchido (senão, ao recarregar a cotação, se perderia). */
+  async function salvarEMudarStatus(novoStatus: QuoteStatus) {
+    if (alterado && !(await handleSalvar())) return
+    await handleStatusChange(novoStatus)
   }
 
   async function handleStatusChange(novoStatus: QuoteStatus) {
@@ -246,6 +305,16 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
   ]
   const corStatus = cotacao ? corPadraoDoStatus(cotacao.status) : '#999'
   const tudoFaturado = resumo.itens > 0 && resumo.itensFaturados === resumo.itens
+  // faturado em parte (o salvo) com o resto ainda a caminho: sugere FATURADO PARCIALMENTE
+  const sugereParcial =
+    !!cotacao &&
+    resumo.itensFaturados > 0 &&
+    !tudoFaturado &&
+    estaACaminho(cotacao.status) &&
+    cotacao.status !== STATUS_FATURADO_PARCIALMENTE &&
+    statusDe('cotacoes').includes(STATUS_FATURADO_PARCIALMENTE)
+  const partes = cotacao ? partesFaturadas(cotacao) : []
+  const chegaramSemFaturar = cotacao ? itens.filter((item) => !lerFaturado(edicao[item.id]) && entregaDoItem(cotacao, item).situacao === 'entregue').length : 0
 
   return (
     <div className="space-y-5">
@@ -253,7 +322,9 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
         <h2 className="font-display text-lg font-semibold text-ink-900 mb-1">Faturamento</h2>
         <p className="text-sm text-ink-400">
           Cotações a partir de <strong className="font-medium text-ink-600">Parcialmente entregue</strong>: registre por
-          quanto cada item foi faturado e compare com o preço de venda que foi passado na cotação, antes do pedido.
+          quanto cada item foi faturado e compare com o preço de venda que foi passado na cotação, antes do pedido. Dá pra
+          faturar em partes: o que já chegou vai com a nota e a data dele, e o que falta segue no transporte
+          (<strong className="font-medium text-ink-600">{nomeDoStatus(STATUS_FATURADO_PARCIALMENTE)}</strong>).
         </p>
       </div>
 
@@ -293,6 +364,9 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
                     {r.itensFaturados === 0
                       ? 'nada faturado ainda'
                       : `${r.itensFaturados} de ${r.itens} ite${r.itens === 1 ? 'm' : 'ns'} faturado${r.itensFaturados === 1 ? '' : 's'} · ${formatCurrency(r.totalFaturado)}`}
+                    {situacaoDoFaturamento(q) === 'parcial' && (
+                      <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">em parte</span>
+                    )}
                   </span>
                 </button>
               )
@@ -381,11 +455,41 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
                 <span className="text-ink-600">Todos os itens já têm valor faturado.</span>
                 <button
                   type="button"
-                  onClick={() => void handleStatusChange('FATURADO')}
+                  onClick={() => void salvarEMudarStatus('FATURADO')}
                   className="pill-tab border border-ink-300 py-1 text-ink-800 hover:bg-surface"
                 >
-                  Mudar status pra FATURADO
+                  Mudar status pra {nomeDoStatus('FATURADO')}
                 </button>
+              </div>
+            )}
+            {sugereParcial && (
+              <div role="note" aria-label="Faturado em parte" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                <span className="text-amber-900">
+                  Parte dos itens faturada e o resto ainda a caminho: os que faltam continuam no transporte (avisos de entrega e
+                  Pedido de Compra) até chegarem.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void salvarEMudarStatus(STATUS_FATURADO_PARCIALMENTE)}
+                  className="pill-tab border border-amber-300 py-1 text-amber-900 hover:bg-surface"
+                >
+                  Mudar status pra {nomeDoStatus(STATUS_FATURADO_PARCIALMENTE)}
+                </button>
+              </div>
+            )}
+            {partes.length > 0 && (
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-medium text-ink-500">{partes.length === 1 ? 'Faturamento registrado' : `Faturado em ${partes.length} partes`}</p>
+                <ul aria-label="Partes faturadas" className="flex flex-wrap gap-1.5">
+                  {partes.map((p) => (
+                    <li key={`${p.data}|${p.nota}`} className="rounded-lg border border-ink-100 bg-ink-50/60 px-2.5 py-1 text-xs text-ink-700">
+                      <strong className="font-semibold">{p.nota ? `NF ${p.nota}` : 'Sem nota'}</strong>
+                      {' · '}
+                      {p.data ? diaBR(p.data) : 'sem data'} · {p.itens} ite{p.itens === 1 ? 'm' : 'ns'} ·{' '}
+                      <span className="font-mono tabular-nums">{formatCurrency(p.valor)}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
@@ -393,77 +497,100 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
           <ComparativoCustoVenda cotacao={cotacao} itens={itens} faturadoDe={(item) => lerFaturado(edicao[item.id])} />
 
           <div className="card">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              <label className="block">
-                <span className="field-label">Nº da(s) nota(s) fiscal(is) de venda</span>
-                <input
-                  type="text"
-                  className="field-input"
-                  placeholder="ex.: 12345, 12350"
-                  value={notaFaturamento}
-                  onChange={(e) => {
-                    setNotaFaturamento(e.target.value)
-                    setAlterado(true)
-                  }}
-                />
-              </label>
-              <label className="block">
-                <span className="field-label">Data do faturamento</span>
-                <input
-                  type="date"
-                  className="field-input"
-                  value={dataFaturamento}
-                  onChange={(e) => {
-                    setDataFaturamento(e.target.value)
-                    setAlterado(true)
-                  }}
-                />
-              </label>
-            </div>
+            <fieldset className="mb-4 rounded-xl border border-ink-100 bg-ink-50/40 p-3">
+              <legend className="px-1 text-sm font-medium text-ink-700">Nota e data deste faturamento</legend>
+              <p className="mb-2 text-xs text-ink-400">
+                Vão para os itens faturados agora (os que estiverem sem nota ou data na tabela). Faturando em partes, cada parte
+                fica com a sua — as já faturadas continuam com a delas.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="block">
+                  <span className="field-label">Nº da nota fiscal de venda</span>
+                  <input
+                    type="text"
+                    className="field-input"
+                    placeholder="ex.: 12345"
+                    value={notaFaturamento}
+                    onChange={(e) => {
+                      setNotaFaturamento(e.target.value)
+                      setAlterado(true)
+                    }}
+                  />
+                </label>
+                <label className="block">
+                  <span className="field-label">Data do faturamento</span>
+                  <input
+                    type="date"
+                    className="field-input"
+                    value={dataFaturamento}
+                    onChange={(e) => {
+                      setDataFaturamento(e.target.value)
+                      setAlterado(true)
+                    }}
+                  />
+                </label>
+              </div>
+            </fieldset>
 
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <p className="text-sm text-ink-500">
                 Preencha a quantidade e o valor unitário faturados — item sem nada preenchido conta como ainda não
                 faturado.
               </p>
-              <button
-                type="button"
-                onClick={faturarTodosPeloPassado}
-                disabled={tudoFaturado}
-                className="pill-tab border border-ink-200 py-1.5 text-ink-700 hover:bg-ink-50 disabled:opacity-40"
-                title="Preenche os itens ainda sem faturamento com a quantidade e o preço de venda passados na cotação"
-              >
-                Faturar os que faltam pelo valor passado
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => faturarPeloPassadoOsQueFaltam(true)}
+                  disabled={chegaramSemFaturar === 0}
+                  className="pill-tab border border-emerald-300 py-1.5 text-emerald-800 hover:bg-emerald-50 disabled:opacity-40"
+                  title="Preenche só os itens que já chegaram (e ainda sem faturamento) com a quantidade e o preço de venda passados"
+                >
+                  Faturar os que já chegaram ({chegaramSemFaturar})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => faturarPeloPassadoOsQueFaltam(false)}
+                  disabled={tudoFaturado}
+                  className="pill-tab border border-ink-200 py-1.5 text-ink-700 hover:bg-ink-50 disabled:opacity-40"
+                  title="Preenche os itens ainda sem faturamento com a quantidade e o preço de venda passados na cotação"
+                >
+                  Faturar os que faltam pelo valor passado
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-ink-100">
-              <table className="w-full min-w-[56rem] text-sm border-collapse">
+              <table className="w-full min-w-[74rem] text-sm border-collapse">
                 <thead>
                   <tr className="bg-ink-50 text-left text-ink-400">
                     <th className="py-2 px-2 font-medium">Produto</th>
+                    <th className="py-2 px-2 font-medium w-32">Entrega</th>
                     <th className="py-2 px-2 font-medium w-20 text-right">Qtd cotada</th>
                     <th className="py-2 px-2 font-medium w-28 text-right">Preço passado (unt.)</th>
                     <th className="py-2 px-2 font-medium w-28 text-right">Total passado</th>
                     <th className="py-2 px-2 font-medium w-24 text-right">Qtd faturada</th>
                     <th className="py-2 px-2 font-medium w-32 text-right">Valor faturado (unt.)</th>
                     <th className="py-2 px-2 font-medium w-28 text-right">Total faturado</th>
+                    <th className="py-2 px-2 font-medium w-28">NF de venda</th>
+                    <th className="py-2 px-2 font-medium w-36">Data</th>
                     <th className="py-2 px-2 font-medium w-44 text-right">Diferença</th>
                   </tr>
                 </thead>
                 <tbody>
                   {itens.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-6 text-center text-ink-400 border-t border-ink-100">
+                      <td colSpan={11} className="py-6 text-center text-ink-400 border-t border-ink-100">
                         Essa cotação não tem itens no pedido.
                       </td>
                     </tr>
                   )}
                   {itens.map((item) => {
                     const passado = precoPassado(item)
-                    const emEdicao = edicao[item.id] ?? { qtd: '', valorUnt: '' }
+                    const emEdicao = edicao[item.id] ?? VAZIO
                     const f = lerFaturado(emEdicao)
                     const p = item.product
+                    const nome = p.descricao || p.referencia || 'item'
+                    const emParte = !!f && f.qtd + 1e-9 < (p.qtd || 0)
                     return (
                       <tr key={item.id} className="border-t border-ink-100">
                         <td className="py-1.5 px-2 text-ink-800">
@@ -473,6 +600,9 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
                           <span className="block text-[11px] text-ink-400">
                             {[p.interno, p.referencia, p.fornecedor].filter((x) => x.trim()).join(' · ')}
                           </span>
+                        </td>
+                        <td className="py-1.5 px-2" aria-label={`Entrega de ${nome}`}>
+                          <SeloEntrega entrega={entregaDoItem(cotacao, item)} />
                         </td>
                         <td className="py-1.5 px-2 text-right font-mono tabular-nums text-ink-500">{p.qtd}</td>
                         <td className="py-1.5 px-2 text-right font-mono tabular-nums text-ink-600">{formatCurrency(passado)}</td>
@@ -519,6 +649,34 @@ export function FaturamentoPage({ currentAdmin }: { currentAdmin: string }) {
                         </td>
                         <td className="py-1.5 px-2 text-right font-mono tabular-nums text-ink-800">
                           {f ? formatCurrency(f.qtd * f.valorUnt) : <span className="text-ink-300">—</span>}
+                          {emParte && <span className="block text-[10px] font-sans font-medium text-amber-700">em parte · faltam {formatarNumeroCurtoBR((p.qtd || 0) - f.qtd, 3)}</span>}
+                        </td>
+                        <td className="py-1.5 px-1">
+                          {f && (
+                            <input
+                              type="text"
+                              className="field-input py-1 text-xs"
+                              placeholder={notaFaturamento.trim() || '—'}
+                              value={emEdicao.nota}
+                              onChange={(e) => patchEdicao(item.id, { nota: e.target.value })}
+                              aria-label={`Nota fiscal de venda de ${nome}`}
+                              title="Vazio: vai com a nota deste faturamento"
+                            />
+                          )}
+                        </td>
+                        <td className="py-1.5 px-1">
+                          {f && (
+                            <>
+                              <input
+                                type="date"
+                                className="field-input py-1 text-xs"
+                                value={emEdicao.data}
+                                onChange={(e) => patchEdicao(item.id, { data: e.target.value })}
+                                aria-label={`Data do faturamento de ${nome}`}
+                              />
+                              {!emEdicao.data && dataFaturamento && <span className="block px-1 text-[10px] text-ink-400">vai com {diaBR(dataFaturamento)}</span>}
+                            </>
+                          )}
                         </td>
                         <td className="py-1.5 px-2 text-right font-mono text-xs tabular-nums">
                           {f ? (

@@ -44,6 +44,8 @@ const SITUACOES: { id: Situacao; nome: string }[] = [
   { id: 'todas', nome: 'Todas' },
   { id: 'faturadas', nome: 'Faturadas' },
   { id: 'aFaturar', nome: 'A faturar' },
+  // pedidos faturados em partes (o que chegou já foi, o resto a caminho ou a faturar)
+  { id: 'emParte', nome: 'Faturadas em parte' },
 ]
 
 function textoDaCelula(id: IdColuna, valor: ValorDaCelula): string {

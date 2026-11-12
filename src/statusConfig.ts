@@ -45,6 +45,7 @@ export const USO_DO_STATUS: Record<TipoStatus, Record<string, string>> = {
     'EM TRANSPORTE': 'Transporte de cada fornecedor e avisos de entrega',
     'CADASTRO DE PRODUTO': 'Ainda conta como a caminho (avisos de entrega)',
     'PARCIALMENTE ENTREGUE': 'Entrega em parte; daqui em diante entra no Faturamento',
+    'FATURADO PARCIALMENTE': 'Parte dos itens faturada; o resto segue no transporte e nos avisos de entrega',
     ENTREGUE: 'Daqui em diante, a mercadoria conta como recebida',
     CONFERIDO: 'Pedido encerrado (fim da Tela Inicial)',
     FATURADO: 'Pedido faturado (aba Faturamento)',

@@ -470,8 +470,10 @@ export const registrarEntrega = emFila(async function registrarEntrega(
   let status = normalizado.status
   if (mudaStatus) {
     const entregues = alvo.todasAsChaves.filter((chave) => transporte[chave]?.entregueEm).length
+    // parte já faturada (o que chegou antes): entregando só mais uma parte, continua FATURADO PARCIALMENTE
+    const temFaturado = Object.keys(normalizado.itensFaturados ?? {}).length > 0
     if (entregues > 0 && entregues === alvo.todasAsChaves.length) status = 'ENTREGUE'
-    else if (entregues > 0) status = 'PARCIALMENTE ENTREGUE'
+    else if (entregues > 0) status = temFaturado || status === 'FATURADO PARCIALMENTE' ? 'FATURADO PARCIALMENTE' : 'PARCIALMENTE ENTREGUE'
     else if (status === 'PARCIALMENTE ENTREGUE' || status === 'ENTREGUE') status = 'EM TRANSPORTE'
   }
 

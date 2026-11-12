@@ -4,8 +4,9 @@ import { itensDoPedidoDeCompra } from './fornecedoresDoPedido'
 import { entradaNoPedidoDeCompra, passosDoStatus } from './historicoStatus'
 import { formatarNumeroBR } from './numeros'
 import { statusDe } from './statusConfig'
-import type { QuoteRecord } from './types'
-import { custoFinal } from './valoresDoPedido'
+import { STATUS_FATURADO_PARCIALMENTE, partesFaturadas, situacaoDoFaturamento, valorAFaturar } from './faturamentoParcial'
+import type { ItemFaturado, QuoteRecord } from './types'
+import { custoFinal, precoPassado } from './valoresDoPedido'
 
 // -----------------------------------------------------------------------
 // Relatório geral pros supervisores: em que pé estão as cotações de um ou
@@ -16,7 +17,7 @@ import { custoFinal } from './valoresDoPedido'
 // desmentir o outro.
 // -----------------------------------------------------------------------
 
-export type EtapaRelatorio = 'aberta' | 'arquivada' | 'confirmada' | 'transporte' | 'entregue' | 'faturada'
+export type EtapaRelatorio = 'aberta' | 'arquivada' | 'confirmada' | 'transporte' | 'entregue' | 'parcial' | 'faturada'
 
 export const ETAPAS_RELATORIO: { id: EtapaRelatorio; nome: string; detalhe: string }[] = [
   { id: 'aberta', nome: 'Não fechadas — em aberto', detalhe: 'Antes do pedido de compra' },
@@ -24,6 +25,7 @@ export const ETAPAS_RELATORIO: { id: EtapaRelatorio; nome: string; detalhe: stri
   { id: 'confirmada', nome: 'Confirmadas', detalhe: 'Pedido de compra e pedido confirmado' },
   { id: 'transporte', nome: 'Em transporte', detalhe: 'A caminho, ainda sem entrega' },
   { id: 'entregue', nome: 'Entregues, a faturar', detalhe: 'De parcialmente entregue até conferido' },
+  { id: 'parcial', nome: 'Faturadas parcialmente', detalhe: 'Parte faturada; o resto a caminho ou a faturar' },
   { id: 'faturada', nome: 'Faturadas', detalhe: 'Pedido faturado' },
 ]
 
@@ -40,22 +42,39 @@ function foiFaturada(cotacao: QuoteRecord): boolean {
 }
 
 /** Vai pela posição do status no fluxo, não pelo nome: um status criado em Configurações cai na etapa
- * de onde ele foi colocado. */
+ * de onde ele foi colocado. Pedido com parte faturada e parte não (ainda antes de FATURADO) fica em
+ * "faturadas parcialmente", esteja o resto a caminho ou já entregue. */
 export function etapaDaCotacao(cotacao: QuoteRecord): EtapaRelatorio {
   if (cotacao.status === 'ARQUIVO') return foiFaturada(cotacao) ? 'faturada' : 'arquivada'
   const ordem = statusDe('cotacoes')
   const posicao = ordem.indexOf(cotacao.status)
   const antesDe = (marco: string) => posicao < ordem.indexOf(marco)
   if (antesDe('PEDIDO DE COMPRA')) return 'aberta'
+  if (!antesDe('FATURADO')) return 'faturada'
+  if (cotacao.status === STATUS_FATURADO_PARCIALMENTE || situacaoDoFaturamento(cotacao) === 'parcial') return 'parcial'
   if (antesDe('EM TRANSPORTE')) return 'confirmada'
   if (antesDe('PARCIALMENTE ENTREGUE')) return 'transporte'
-  if (antesDe('FATURADO')) return 'entregue'
-  return 'faturada'
+  return 'entregue'
 }
 
+const diaValido = (data: string | undefined) => {
+  const t = data && /^\d{4}-\d{2}-\d{2}$/.test(data) ? new Date(`${data}T12:00:00`).getTime() : NaN
+  return Number.isNaN(t) ? undefined : t
+}
+
+/** Data do item faturado: a dele (faturamento em partes), a da cotação ou a do registro. */
+export function dataDoItemFaturado(cotacao: QuoteRecord, f: ItemFaturado): number {
+  return diaValido(f.data) ?? diaValido(cotacao.dataFaturamento) ?? f.registradoEm
+}
+
+/** A do último faturamento (em partes, a da parte mais recente). */
 export function dataDoFaturamento(cotacao: QuoteRecord): number | undefined {
-  const informada = cotacao.dataFaturamento ? new Date(`${cotacao.dataFaturamento}T12:00:00`).getTime() : NaN
-  if (!Number.isNaN(informada)) return informada
+  const dosItens = Object.values(cotacao.itensFaturados ?? {})
+    .map((f) => diaValido(f.data))
+    .filter((t): t is number => t !== undefined)
+  if (dosItens.length > 0) return Math.max(...dosItens)
+  const informada = diaValido(cotacao.dataFaturamento)
+  if (informada !== undefined) return informada
   const registros = Object.values(cotacao.itensFaturados ?? {}).map((f) => f.registradoEm)
   if (registros.length > 0) return Math.max(...registros)
   return [...cotacao.statusHistory].reverse().find((h) => h.status === 'FATURADO')?.changedAt
@@ -88,6 +107,10 @@ export interface LinhaRelatorio {
   /** Faturada sem o valor registrado na aba Faturamento: `faturado` é o preço passado na cotação. */
   faturadoEstimado: boolean
   custoDoFaturado: number
+  /** O que falta faturar, pelo preço passado — nas entregues a faturar e nas faturadas em parte. */
+  aFaturar: number
+  /** Em quantas partes (notas/datas) foi faturada até agora. */
+  partesFaturadas: number
   /** Em dias úteis: da solicitação até enviar a cotação. */
   diasResposta?: number
   /** Em dias úteis: do pedido de compra até a mercadoria chegar. */
@@ -121,6 +144,7 @@ export function linhaDaCotacao(cotacao: QuoteRecord): LinhaRelatorio {
   }
   const faturadoEstimado = etapa === 'faturada' && faturado === 0
   const faturadaEm = etapa === 'faturada' || faturado > 0 ? dataDoFaturamento(cotacao) : undefined
+  const aFaturar = etapa === 'entregue' || etapa === 'parcial' ? valorAFaturar(cotacao, precoPassado) : 0
 
   const passos = passosDoStatus(cotacao)
   const primeiraEm = (...status: string[]) => passos.find((p) => status.includes(p.para))?.em
@@ -146,6 +170,8 @@ export function linhaDaCotacao(cotacao: QuoteRecord): LinhaRelatorio {
     faturado: faturadoEstimado ? valorCotado : faturado,
     faturadoEstimado,
     custoDoFaturado: faturadoEstimado ? custo : custoDoFaturado,
+    aFaturar,
+    partesFaturadas: partesFaturadas(cotacao).length,
     diasResposta: diasEntre(cotacao.dataSolicitacao ?? cotacao.createdAt, primeiraEm('ENVIADO')),
     diasEntrega: diasEntre(entradaNoPedidoDeCompra(cotacao)?.em, entregueEm),
     diasFaturamento: diasEntre(entregueEm, faturadaEm),
@@ -161,16 +187,18 @@ export interface Totais {
   lucroDefinido: number
   faturado: number
   custoDoFaturado: number
+  aFaturar: number
 }
 
 function somar(linhas: LinhaRelatorio[]): Totais {
-  const t: Totais = { quantidade: linhas.length, valorCotado: 0, custo: 0, lucroDefinido: 0, faturado: 0, custoDoFaturado: 0 }
+  const t: Totais = { quantidade: linhas.length, valorCotado: 0, custo: 0, lucroDefinido: 0, faturado: 0, custoDoFaturado: 0, aFaturar: 0 }
   for (const l of linhas) {
     t.valorCotado += l.valorCotado
     t.custo += l.custo
     t.lucroDefinido += l.lucroDefinido
     t.faturado += l.faturado
     t.custoDoFaturado += l.custoDoFaturado
+    t.aFaturar += l.aFaturar
   }
   return t
 }

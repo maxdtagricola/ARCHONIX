@@ -2,8 +2,10 @@ import { calculateItem } from './calc/calculator'
 import { diasUteisDesde } from './diasUteis'
 import { itensDoPedidoDeCompra } from './fornecedoresDoPedido'
 import { passosDoStatus } from './historicoStatus'
-import { adminDaCotacao, dataDoFaturamento } from './relatorioGeral'
-import { nomeDoStatus, statusDe } from './statusConfig'
+import { entregaDoItem, notaEDataDoItem, situacaoDoFaturamento } from './faturamentoParcial'
+import { formatarNumeroCurtoBR } from './numeros'
+import { adminDaCotacao, dataDoFaturamento, dataDoItemFaturado } from './relatorioGeral'
+import { nomeDoStatus, statusAntesDe, statusDe } from './statusConfig'
 import type { QuoteRecord } from './types'
 import { custoFinal, precoPassado } from './valoresDoPedido'
 
@@ -52,6 +54,7 @@ export type IdColuna =
   | 'prazoInformado'
   | 'diasUteis'
   | 'dataCotacao'
+  | 'situacaoItem'
 
 export type TipoDeValor = 'texto' | 'quantidade' | 'moeda' | 'percentual' | 'data' | 'dias'
 
@@ -100,6 +103,7 @@ export const COLUNAS: DefColuna[] = [
   { id: 'prazoInformado', titulo: 'PRAZO INFORMADO', tipo: 'texto', largura: 18, descricao: 'Prazo de entrega passado ao cliente' },
   { id: 'diasUteis', titulo: 'DIAS ÚTEIS', tipo: 'dias', largura: 12, fechamento: 'media', descricao: 'Dias úteis da confirmação ao faturamento' },
   { id: 'dataCotacao', titulo: 'DATA DA COTAÇÃO', tipo: 'data', largura: 16, descricao: 'Quando a cotação foi criada' },
+  { id: 'situacaoItem', titulo: 'SITUAÇÃO DO ITEM', tipo: 'texto', largura: 24, descricao: 'Faturado, faturado em parte ou a faturar (e se já chegou)' },
 ]
 
 export const COLUNA = Object.fromEntries(COLUNAS.map((c) => [c.id, c])) as Record<IdColuna, DefColuna>
@@ -142,6 +146,10 @@ export interface LinhaControle {
   notaFaturamento: string
   prazoInformado: string
   faturada: boolean
+  /** "FATURADO", "FATURADO EM PARTE (3 DE 5)", "A FATURAR — CHEGOU", "A FATURAR — A CAMINHO"… */
+  situacaoItem: string
+  /** A cotação foi faturada só em parte até agora (faturamento em partes, o resto a caminho ou a faturar). */
+  cotacaoFaturadaEmParte: boolean
 }
 
 export type ValorDaCelula = string | number | undefined
@@ -149,6 +157,9 @@ export type ValorDaCelula = string | number | undefined
 export function valorDaColuna(l: LinhaControle, id: IdColuna): ValorDaCelula {
   return l[id] as ValorDaCelula
 }
+
+/** O status é `marco` ou vem depois dele no fluxo (arquivo conta como depois). */
+const statusDepoisDe = (status: string, marco: string) => status === 'ARQUIVO' || !statusAntesDe(status, marco)
 
 const meiaNoite = (t: number) => {
   const d = new Date(t)
@@ -183,7 +194,9 @@ export function linhasDaCotacao(cotacao: QuoteRecord): LinhaControle[] {
   if (dataConfirmacao === undefined && !temItensFaturados) return []
   // faturada antes de existir o valor por item na aba Faturamento: a data vale pra todos os itens, sem valor
   const faturadaSoPeloStatus = !temItensFaturados && cotacao.statusHistory.some((h) => h.status === 'FATURADO')
-  const dataFaturamento = temItensFaturados || faturadaSoPeloStatus ? dataDoFaturamento(cotacao) : undefined
+  const dataDaCotacao = faturadaSoPeloStatus ? dataDoFaturamento(cotacao) : undefined
+  // faturada em partes: cada item vai com a nota e a data da parte dele
+  const emParte = !statusDepoisDe(cotacao.status, 'FATURADO') && situacaoDoFaturamento(cotacao) === 'parcial'
 
   return itensDoPedidoDeCompra(cotacao).map((item) => {
     const p = item.product
@@ -193,6 +206,19 @@ export function linhasDaCotacao(cotacao: QuoteRecord): LinhaControle[] {
     const f = faturamentos[item.id]
     const faturada = !!f || faturadaSoPeloStatus
     const qtd = p.qtd || 0
+    const dataFaturamento = f ? dataDoItemFaturado(cotacao, f) : dataDaCotacao
+    const entrega = entregaDoItem(cotacao, item)
+    const situacaoItem = f
+      ? f.qtd + 1e-9 < qtd
+        ? `FATURADO EM PARTE (${formatarNumeroCurtoBR(f.qtd, 3)} DE ${formatarNumeroCurtoBR(qtd, 3)})`
+        : 'FATURADO'
+      : faturadaSoPeloStatus
+        ? 'FATURADO'
+        : entrega.situacao === 'entregue'
+          ? 'A FATURAR — CHEGOU'
+          : entrega.situacao === 'caminho'
+            ? 'A FATURAR — A CAMINHO'
+            : 'A FATURAR'
     const margemFinal = f ? lucroCom(f.valorUnt, custoUnitario, calculado.cmvFracao, item.pricing.lucroPct) : undefined
     return {
       chave: `${cotacao.id}:${item.id}`,
@@ -226,16 +252,18 @@ export function linhasDaCotacao(cotacao: QuoteRecord): LinhaControle[] {
       totalDias: faturada ? diasCorridos(dataConfirmacao, dataFaturamento) : undefined,
       diasUteis:
         faturada && dataConfirmacao !== undefined && dataFaturamento !== undefined && dataFaturamento >= dataConfirmacao ? diasUteisDesde(dataConfirmacao, dataFaturamento) : undefined,
-      notaFaturamento: cotacao.notaFaturamento ?? '',
+      notaFaturamento: f ? notaEDataDoItem(cotacao, f).nota : faturadaSoPeloStatus ? (cotacao.notaFaturamento ?? '') : '',
       prazoInformado: p.prazoEntrega?.trim() || '',
       faturada,
+      situacaoItem,
+      cotacaoFaturadaEmParte: emParte,
     }
   })
 }
 
 // --- filtros, ordem e grupos ------------------------------------------------------------------
 export type DataDeReferencia = 'confirmacao' | 'faturamento'
-export type Situacao = 'todas' | 'faturadas' | 'aFaturar'
+export type Situacao = 'todas' | 'faturadas' | 'aFaturar' | 'emParte'
 export type Agrupamento = 'nenhum' | 'vendedor' | 'cliente' | 'mesConfirmacao' | 'mesFaturamento'
 
 export const AGRUPAMENTOS: { id: Agrupamento; nome: string }[] = [
@@ -269,6 +297,7 @@ export function filtrar(linhas: LinhaControle[], f: Filtro): LinhaControle[] {
     if (data === undefined || data < f.inicio || data >= f.fim) return false
     if (f.situacao === 'faturadas' && !l.faturada) return false
     if (f.situacao === 'aFaturar' && l.faturada) return false
+    if (f.situacao === 'emParte' && !l.cotacaoFaturadaEmParte) return false
     if (f.vendedores.length > 0 && !f.vendedores.includes(l.vendedor)) return false
     if (busca && !semAcento([l.vendedor, l.cliente, l.interno, l.ref, l.descricao, l.codigo, l.observacao, l.fornecedor].join(' ')).includes(busca)) return false
     return true

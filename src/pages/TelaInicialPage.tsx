@@ -40,11 +40,13 @@ function emAndamentoNaCotacao(status: QuoteStatus): boolean {
   const i = lista.indexOf(status)
   return i > lista.indexOf('PENDENTE') && i < lista.indexOf('ENVIADO')
 }
-/** Bloco EM TRANSPORTE: o que está a caminho — inclusive o que já chegou só em parte (CADASTRO DE
- * PRODUTO fica de fora; os criados entre EM TRANSPORTE e ENTREGUE entram). */
+/** Bloco EM TRANSPORTE: o que está a caminho — inclusive o que já chegou só em parte, faturada ou não
+ * (CADASTRO DE PRODUTO fica de fora; os criados entre EM TRANSPORTE e ENTREGUE entram). */
 function noBlocoEmTransporte(status: QuoteStatus): boolean {
   if (!estaACaminho(status)) return false
-  return !STATUS_DO_SISTEMA.cotacoes.includes(status) || status === 'EM TRANSPORTE' || status === 'PARCIALMENTE ENTREGUE'
+  return (
+    !STATUS_DO_SISTEMA.cotacoes.includes(status) || status === 'EM TRANSPORTE' || status === 'PARCIALMENTE ENTREGUE' || status === 'FATURADO PARCIALMENTE'
+  )
 }
 /** PENDENTE há mais dias úteis que isso fica marcado como atrasado. */
 const DIAS_PENDENTE_ALERTA = 2

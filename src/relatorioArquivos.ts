@@ -35,10 +35,11 @@ function linhaDeTotais(rotulo: string, t: Totais): string[] {
     textoPercentual(margem(t.valorCotado, t.custo)),
     formatCurrency(t.faturado),
     textoPercentual(margem(t.faturado, t.custoDoFaturado)),
+    t.aFaturar > 0 ? formatCurrency(t.aFaturar) : '',
   ]
 }
 
-const CABECALHO_TOTAIS = ['Cotações', 'Valor cotado', 'Custo', 'Margem', 'Faturado', 'Margem faturada']
+const CABECALHO_TOTAIS = ['Cotações', 'Valor cotado', 'Custo', 'Margem', 'Faturado', 'Margem faturada', 'A faturar']
 const NOTA_ESTIMADAS = (n: number) =>
   `${n} ${n === 1 ? 'cotação faturada está' : 'cotações faturadas estão'} sem o valor registrado na aba Faturamento: entra${n === 1 ? '' : 'm'} pelo preço passado na cotação.`
 
@@ -85,7 +86,7 @@ export function baixarRelatorioPdf({ relatorio, periodo, admins, geradoPor }: Da
 
   secao(
     'Resumo',
-    ['Cotações', 'Fecharam', 'Valor cotado', 'Margem cotada', 'Margem definida', 'Faturamento final', 'Margem faturada'],
+    ['Cotações', 'Fecharam', 'Valor cotado', 'Margem cotada', 'Margem definida', 'Faturamento final', 'Margem faturada', 'A faturar'],
     [
       [
         String(totais.quantidade),
@@ -95,6 +96,7 @@ export function baixarRelatorioPdf({ relatorio, periodo, admins, geradoPor }: Da
         textoPercentual(totais.valorCotado > 0 ? totais.lucroDefinido / totais.valorCotado : undefined),
         formatCurrency(totais.faturado),
         textoPercentual(margem(totais.faturado, totais.custoDoFaturado)),
+        totais.aFaturar > 0 ? formatCurrency(totais.aFaturar) : '',
       ],
     ],
   )
@@ -102,14 +104,14 @@ export function baixarRelatorioPdf({ relatorio, periodo, admins, geradoPor }: Da
     'Situação das cotações',
     ['Situação', ...CABECALHO_TOTAIS],
     relatorio.porEtapa.map((e) => linhaDeTotais(e.nome, e.totais)),
-    aDireita(1, 2, 3, 4, 5, 6),
+    aDireita(1, 2, 3, 4, 5, 6, 7),
   )
   if (relatorio.porAdmin.length > 1) {
     secao(
       'Por admin',
       ['Admin', ...CABECALHO_TOTAIS],
       relatorio.porAdmin.map((a) => linhaDeTotais(a.admin, a.totais)),
-      aDireita(1, 2, 3, 4, 5, 6),
+      aDireita(1, 2, 3, 4, 5, 6, 7),
     )
   }
   secao(
@@ -135,7 +137,7 @@ export function baixarRelatorioPdf({ relatorio, periodo, admins, geradoPor }: Da
 
   secao(
     'Cotações',
-    ['Cotação', 'Criada', 'Cliente', 'Admin', 'Vendedor', 'Status', 'Prazo', 'Valor cotado', 'Custo', 'Margem', 'Faturado', 'Nota'],
+    ['Cotação', 'Criada', 'Cliente', 'Admin', 'Vendedor', 'Status', 'Prazo', 'Valor cotado', 'Custo', 'Margem', 'Faturado', 'A faturar', 'Nota'],
     relatorio.linhas.map((l) => [
       l.codigo,
       dataCurta(l.criadaEm),
@@ -148,9 +150,10 @@ export function baixarRelatorioPdf({ relatorio, periodo, admins, geradoPor }: Da
       formatCurrency(l.custo),
       textoPercentual(margem(l.valorCotado, l.custo)),
       l.faturado > 0 ? `${formatCurrency(l.faturado)}${l.faturadoEstimado ? ' *' : ''}` : '',
+      l.aFaturar > 0 ? formatCurrency(l.aFaturar) : '',
       l.notaFaturamento,
     ]),
-    aDireita(7, 8, 9, 10),
+    aDireita(7, 8, 9, 10, 11),
     7.5,
   )
   if (relatorio.estimadas > 0) {
@@ -196,7 +199,7 @@ function estilizarCabecalho(linha: ExcelJS.Row) {
 
 function montarAbaResumo(planilha: ExcelJS.Workbook, { relatorio, periodo, admins, geradoPor }: DadosDoRelatorio) {
   const aba = planilha.addWorksheet('Resumo')
-  aba.columns = [{ width: 34 }, { width: 11 }, { width: 17 }, { width: 17 }, { width: 11 }, { width: 17 }, { width: 11 }]
+  aba.columns = [{ width: 34 }, { width: 11 }, { width: 17 }, { width: 17 }, { width: 11 }, { width: 17 }, { width: 11 }, { width: 17 }]
   aba.addRow(['Relatório geral de cotações']).getCell(1).font = { name: FONTE, size: 14, bold: true }
   aba.addRow([`Período: ${periodo}`])
   aba.addRow([`Admins: ${admins.join(', ')}`])
@@ -217,7 +220,9 @@ function montarAbaResumo(planilha: ExcelJS.Workbook, { relatorio, periodo, admin
         t.faturado,
         // o custo do faturado não é coluna aqui: o resultado vem pronto, da aba Cotações não dá pra somar por grupo
         margem(t.faturado, t.custoDoFaturado) ?? '',
+        t.aFaturar,
       ])
+      linha.getCell(8).numFmt = MOEDA
       linha.getCell(3).numFmt = MOEDA
       linha.getCell(4).numFmt = MOEDA
       linha.getCell(5).numFmt = PERCENTUAL
@@ -279,6 +284,7 @@ function montarAbaCotacoes(planilha: ExcelJS.Workbook, relatorio: Relatorio) {
     { header: 'Dias: pedido até entrega', width: 11 },
     { header: 'Dias: entrega até faturar', width: 11 },
     { header: 'Motivo de não fechar', width: 32 },
+    { header: 'A faturar', width: 15 },
   ]
   estilizarCabecalho(aba.getRow(1))
   aba.getRow(1).height = 44
@@ -308,6 +314,7 @@ function montarAbaCotacoes(planilha: ExcelJS.Workbook, relatorio: Relatorio) {
       l.diasEntrega ?? '',
       l.diasFaturamento ?? '',
       [l.motivo, l.motivoDetalhe].filter(Boolean).join(': '),
+      l.aFaturar,
     ])
   }
 
@@ -327,9 +334,11 @@ function montarAbaCotacoes(planilha: ExcelJS.Workbook, relatorio: Relatorio) {
       '',
       soma('O', t.custoDoFaturado),
       formula(`IF(M${n}>0,(M${n}-O${n})/M${n},"")`, margem(t.faturado, t.custoDoFaturado)),
+      '', '', '', '', '', '',
+      soma('W', t.aFaturar),
     ])
     total.eachCell({ includeEmpty: true }, (c) => (c.font = { name: FONTE, size: 10, bold: true }))
-    aba.autoFilter = { from: { row: 1, column: 1 }, to: { row: fim, column: 22 } }
+    aba.autoFilter = { from: { row: 1, column: 1 }, to: { row: fim, column: 23 } }
   }
 
   aba.eachRow((linha, numero) => {
@@ -339,7 +348,7 @@ function montarAbaCotacoes(planilha: ExcelJS.Workbook, relatorio: Relatorio) {
     })
     linha.getCell(2).numFmt = 'dd/mm/yyyy'
     linha.getCell(18).numFmt = 'dd/mm/yyyy'
-    for (const coluna of [9, 10, 13, 15]) linha.getCell(coluna).numFmt = MOEDA
+    for (const coluna of [9, 10, 13, 15, 23]) linha.getCell(coluna).numFmt = MOEDA
     for (const coluna of [11, 12, 16]) linha.getCell(coluna).numFmt = PERCENTUAL
   })
 }

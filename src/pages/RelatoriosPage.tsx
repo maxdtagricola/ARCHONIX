@@ -76,6 +76,7 @@ function CelulasDeTotais({ totais: t }: { totais: Totais }) {
       <CelulaMargem valor={t.valorCotado} custo={t.custo} />
       <td className={celulaNumero}>{formatCurrency(t.faturado)}</td>
       <CelulaMargem valor={t.faturado} custo={t.custoDoFaturado} />
+      <td className={celulaNumero}>{t.aFaturar > 0 ? formatCurrency(t.aFaturar) : '—'}</td>
     </>
   )
 }
@@ -85,7 +86,7 @@ function TitulosDeTotais({ primeira }: { primeira: string }) {
     <thead>
       <tr className="bg-ink-50 text-left text-ink-400">
         <th className={`${celula} font-medium`}>{primeira}</th>
-        {['Cotações', 'Valor cotado', 'Custo', 'Margem', 'Faturado', 'Margem faturada'].map((t) => (
+        {['Cotações', 'Valor cotado', 'Custo', 'Margem', 'Faturado', 'Margem faturada', 'A faturar'].map((t) => (
           <th key={t} className={`${celula} font-medium text-right`}>
             {t}
           </th>
@@ -271,7 +272,9 @@ export function RelatoriosPage({ currentAdmin }: { currentAdmin: string }) {
             <Numero
               titulo="Faturamento final"
               valor={formatCurrency(totais.faturado)}
-              detalhe={`Margem faturada: ${textoPercentual(margem(totais.faturado, totais.custoDoFaturado))}`}
+              detalhe={`Margem faturada: ${textoPercentual(margem(totais.faturado, totais.custoDoFaturado))}${
+                totais.aFaturar > 0 ? ` · a faturar: ${formatCurrency(totais.aFaturar)}` : ''
+              }`}
             />
           </div>
 
@@ -390,7 +393,7 @@ export function RelatoriosPage({ currentAdmin }: { currentAdmin: string }) {
                       {t}
                     </th>
                   ))}
-                  {['Valor cotado', 'Custo', 'Margem', 'Faturado'].map((t) => (
+                  {['Valor cotado', 'Custo', 'Margem', 'Faturado', 'A faturar'].map((t) => (
                     <th key={t} className={`${celula} font-medium text-right`}>
                       {t}
                     </th>
@@ -422,7 +425,11 @@ export function RelatoriosPage({ currentAdmin }: { currentAdmin: string }) {
                       <CelulaMargem valor={l.valorCotado} custo={l.custo} />
                       <td className={celulaNumero} title={l.faturadoEstimado ? 'Sem valor registrado na aba Faturamento: é o preço passado na cotação' : undefined}>
                         {l.faturado > 0 ? `${formatCurrency(l.faturado)}${l.faturadoEstimado ? ' *' : ''}` : '—'}
+                        {l.etapa === 'parcial' && l.partesFaturadas > 0 && (
+                          <span className="block text-[10px] text-amber-700">em {l.partesFaturadas} parte{l.partesFaturadas === 1 ? '' : 's'}</span>
+                        )}
                       </td>
+                      <td className={celulaNumero}>{l.aFaturar > 0 ? formatCurrency(l.aFaturar) : '—'}</td>
                       <td className={`${celula} whitespace-nowrap text-ink-600`}>{l.notaFaturamento || '—'}</td>
                     </tr>
                   )

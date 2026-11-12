@@ -474,7 +474,8 @@ export function PedidoCompraPage({
   }
 
   /** Marca (ou desfaz) a entrega da mercadoria dos fornecedores `chaves` — o status acompanha
-   * (todos entregues: ENTREGUE; só alguns: PARCIALMENTE ENTREGUE). */
+   * (todos entregues: ENTREGUE; só alguns: PARCIALMENTE ENTREGUE, ou FATURADO PARCIALMENTE se parte
+   * já foi faturada). */
   async function handleEntrega(chaves: string[], entregue: boolean) {
     if (!cotacao || chaves.length === 0) return
     const todas = gruposPorFornecedor.map((g) => chaveTransporte(g.chave))
@@ -483,8 +484,11 @@ export function PedidoCompraPage({
     let mensagem: string
     if (entregue) {
       const entreguesDepois = todas.filter((c) => chaves.includes(c) || cotacao.transportePorFornecedor?.[c]?.entregueEm).length
-      const proximo = entreguesDepois === todas.length ? 'ENTREGUE' : 'PARCIALMENTE ENTREGUE'
-      mensagem = `Marcar a mercadoria${deQuem} como entregue?${estaACaminho(cotacao.status) ? `\nA cotação vai para ${nomeDoStatus(proximo)}.` : ''}`
+      const temFaturado = Object.keys(cotacao.itensFaturados ?? {}).length > 0 || cotacao.status === 'FATURADO PARCIALMENTE'
+      const proximo = entreguesDepois === todas.length ? 'ENTREGUE' : temFaturado ? 'FATURADO PARCIALMENTE' : 'PARCIALMENTE ENTREGUE'
+      mensagem = `Marcar a mercadoria${deQuem} como entregue?${
+        estaACaminho(cotacao.status) ? `\nA cotação ${proximo === cotacao.status ? 'continua em' : 'vai para'} ${nomeDoStatus(proximo)}.` : ''
+      }`
     } else {
       mensagem = `Desfazer a entrega${deQuem}? A mercadoria volta a constar como em transporte.`
     }

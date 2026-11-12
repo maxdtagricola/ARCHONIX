@@ -13,9 +13,14 @@ export const PALETA_CATEGORICA = [
 ]
 export const COR_OUTROS = '#c3c2b7'
 
+// status do sistema que chegaram depois: cor própria, e não contam na posição dos outros — assim os que
+// já existiam continuam com a cor de sempre
+const COR_FIXA: Record<string, string> = { 'FATURADO PARCIALMENTE': '#008300' }
+
 /** Cor padrão pra um status, pela posição dele numa lista — mesma paleta fixa pra todos os fluxos de status do app. */
 export function corPadraoDoStatus(status: string, lista: readonly string[] = statusDe('cotacoes')): string {
-  const indice = lista.indexOf(status)
+  if (COR_FIXA[status]) return COR_FIXA[status]
+  const indice = lista.filter((s) => !COR_FIXA[s]).indexOf(status)
   return PALETA_CATEGORICA[(indice === -1 ? 0 : indice) % PALETA_CATEGORICA.length]
 }
 
