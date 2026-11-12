@@ -245,6 +245,61 @@
       text-align: left;
     }
   }
+  /* Comparar fornecedores no formato do CUSTO BASE MACRO (PlanilhaComparar.tsx): as cores da planilha
+   * (--cor-celula vem de cada célula). No escuro, a cor entra misturada no fundo, pra letra clara ler. */
+  .planilha-comparar .planilha-cabecalho {
+    background-color: var(--cor-celula);
+    color: #000;
+  }
+  .dark .planilha-comparar .planilha-cabecalho {
+    background-color: color-mix(in srgb, var(--cor-celula) 40%, rgb(var(--surface)));
+    color: rgb(var(--ink-900));
+  }
+  .planilha-comparar .planilha-celula {
+    background-color: rgb(var(--surface));
+  }
+  .planilha-comparar .planilha-cor {
+    background-color: var(--cor-celula);
+  }
+  .dark .planilha-comparar .planilha-cor {
+    background-color: color-mix(in srgb, var(--cor-celula) 30%, rgb(var(--surface)));
+  }
+  /* listras: as linhas pares de cinza, como a formatação da planilha (as cores dos fornecedores ficam) */
+  .planilha-comparar .planilha-listra > .planilha-celula {
+    background-color: #d9d9d9;
+  }
+  .dark .planilha-comparar .planilha-listra > .planilha-celula {
+    background-color: rgb(var(--ink-100));
+  }
+  /* referência repetida, como a regra de valores duplicados da planilha */
+  .planilha-comparar td.planilha-repetida.planilha-celula {
+    background-color: #ffc7ce;
+    color: #9c0006;
+  }
+  .dark .planilha-comparar td.planilha-repetida.planilha-celula {
+    background-color: color-mix(in srgb, #ffc7ce 25%, rgb(var(--surface)));
+    color: rgb(var(--rose-700));
+  }
+  /* a linha selecionada fica amarela, como a macro da planilha — por cima de tudo */
+  .planilha-comparar tr.planilha-linha-selecionada > td.planilha-celula,
+  .planilha-comparar tr.planilha-linha-selecionada > td.planilha-cor {
+    background-color: #ffff00;
+    color: #000;
+  }
+  .dark .planilha-comparar tr.planilha-linha-selecionada > td.planilha-celula,
+  .dark .planilha-comparar tr.planilha-linha-selecionada > td.planilha-cor {
+    background-color: color-mix(in srgb, #facc15 32%, rgb(var(--surface)));
+    color: rgb(var(--ink-900));
+  }
+  .planilha-comparar .planilha-rodape {
+    background-color: rgb(var(--ink-100));
+  }
+  .planilha-comparar .planilha-soltar-antes {
+    box-shadow: inset 3px 0 0 rgb(var(--ink-900));
+  }
+  .planilha-comparar .planilha-soltar-depois {
+    box-shadow: inset -3px 0 0 rgb(var(--ink-900));
+  }
   .planilha-preview table {
     @apply w-full border-collapse text-xs text-ink-800;
   }

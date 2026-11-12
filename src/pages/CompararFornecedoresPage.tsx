@@ -15,6 +15,8 @@ import {
 import { avisar, confirmar } from '../dialogs'
 import { formatarNumeroCurtoBR, parseNumeroFlexivel } from '../numeros'
 import { normalizarNcm } from '../importacao/ncm'
+import { useEstadoPersistente } from '../estadoPersistente'
+import { PlanilhaComparar } from '../components/PlanilhaComparar'
 import type { CotacaoFornecedorItem, Fornecedor, ProductInput, QuoteItem, QuoteStatus } from '../types'
 
 const ID_LISTA_FORNECEDORES = 'comparar-fornecedores-sugestoes'
@@ -429,6 +431,8 @@ export function CompararFornecedoresPage({
   activeStatus,
   activeResponsavel,
   items,
+  codigoCotacao,
+  cliente,
   onPatchItem,
   onGoToCotacoes,
   onGoToPrecificacao,
@@ -438,12 +442,17 @@ export function CompararFornecedoresPage({
   activeStatus: QuoteStatus
   activeResponsavel: string
   items: QuoteItem[]
+  /** Pro nome do Excel. */
+  codigoCotacao?: string
+  cliente?: string
   onPatchItem: (id: string, patch: Partial<ProductInput>) => void
   onGoToCotacoes: () => void
   onGoToPrecificacao: () => void
 }) {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
   const [importAberto, setImportAberto] = useState(false)
+  // planilha (como o CUSTO BASE MACRO) ou detalhado (cada cotação com prazo, NCM, qtd que atende…) — por aparelho
+  const [visao, setVisao] = useEstadoPersistente<'planilha' | 'detalhado'>('comparar:visao', 'planilha')
   const [busca, setBusca] = useState('')
   const [filtroFornecedor, setFiltroFornecedor] = useState('')
   const [soSemCotacao, setSoSemCotacao] = useState(false)
@@ -535,6 +544,23 @@ export function CompararFornecedoresPage({
     aplicarCotacoes(item, cotacoes, cotacao.id === maisBarata?.id ? null : cotacao.id)
   }
 
+  /** Preço digitado na planilha: muda a cotação do fornecedor, cria uma nova ou (apagado) tira. */
+  async function handleDefinirPreco(item: QuoteItem, fornecedor: string, cotacao: CotacaoFornecedorItem | undefined, valor: number | undefined) {
+    if (valor === undefined) {
+      if (!cotacao) return
+      // com prazo, NCM, quantidade… guardados, confirma antes de perder
+      const temDetalhes =
+        !!cotacao.prazoEntrega || !!cotacao.ncm || cotacao.quantidadeDisponivel !== undefined || cotacao.valorTotal !== undefined || !!cotacao.observacao || !!cotacao.ufOrigem
+      if (temDetalhes && !(await confirmar(`Tirar a cotação de ${cotacao.fornecedor} deste item? Ela tem prazo, NCM ou outros dados guardados.`, { confirmText: 'Tirar', tone: 'danger' }))) {
+        return
+      }
+      aplicarCotacoes(item, (item.product.cotacoesFornecedores ?? []).filter((c) => c.id !== cotacao.id))
+      return
+    }
+    if (cotacao) handleEditarCotacao(item, cotacao.id, { valorUnitario: valor })
+    else handleAddCotacao(item, { fornecedor, marca: '', valorUnitario: valor })
+  }
+
   async function handleRemoveCotacao(item: QuoteItem, cotacaoId: string) {
     const cotacao = (item.product.cotacoesFornecedores ?? []).find((c) => c.id === cotacaoId)
     const quem = cotacao ? [cotacao.fornecedor, cotacao.marca].filter((x) => x?.trim()).join(' · ') : ''
@@ -615,12 +641,21 @@ export function CompararFornecedoresPage({
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="font-display text-lg font-semibold text-ink-900">Comparar fornecedores</h2>
-            <p className="text-sm text-ink-400">
-              Registre as cotações que os fornecedores devolverem — edite direto na tabela. A mais barata de cada item
-              (★) já atualiza o fornecedor, a marca, o valor unitário, o prazo e o NCM do item automaticamente; se
-              compensar outra, mesmo mais cara, clique em "Escolher" nela. Em "Qtd atende", quanto o fornecedor tem do
-              item — vazio quer dizer que ele atende a quantidade toda.
-            </p>
+            {visao === 'planilha' ? (
+              <p className="text-sm text-ink-400">
+                No formato do Custo Base Macro: uma linha por item e, pra cada fornecedor, o preço e a marca. Digite o preço
+                na coluna do fornecedor (apagar tira a cotação); o mais barato (VLR MÍN, em verde) já preenche o item, e o
+                círculo da célula escolhe outro, mesmo mais caro. Cada coluna tem filtro e ordem no ▾, e muda de lugar
+                arrastando o título. Prazo, NCM e quantidade que atende ficam no Detalhado.
+              </p>
+            ) : (
+              <p className="text-sm text-ink-400">
+                Registre as cotações que os fornecedores devolverem — edite direto na tabela. A mais barata de cada item
+                (★) já atualiza o fornecedor, a marca, o valor unitário, o prazo e o NCM do item automaticamente; se
+                compensar outra, mesmo mais cara, clique em "Escolher" nela. Em "Qtd atende", quanto o fornecedor tem do
+                item — vazio quer dizer que ele atende a quantidade toda.
+              </p>
+            )}
           </div>
           {/* quebra linha no celular: lado a lado, os dois botões passavam da largura da tela */}
           <div ref={voltarRef} className="flex flex-wrap gap-2">
@@ -637,6 +672,24 @@ export function CompararFornecedoresPage({
 
         {items.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div role="group" aria-label="Como ver" className="inline-flex rounded-lg border border-ink-200 p-0.5">
+              {(
+                [
+                  ['planilha', 'Planilha (Custo Base Macro)'],
+                  ['detalhado', 'Detalhado'],
+                ] as const
+              ).map(([id, nome]) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={visao === id}
+                  onClick={() => setVisao(id)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${visao === id ? 'bg-ink-950 text-white' : 'text-ink-600 hover:bg-ink-100'}`}
+                >
+                  {nome}
+                </button>
+              ))}
+            </div>
             <input
               type="text"
               className="field-input w-full sm:w-64 py-1.5 text-sm"
@@ -645,39 +698,43 @@ export function CompararFornecedoresPage({
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
             />
-            <select
-              className={`field-input w-full sm:w-56 py-1.5 text-sm ${filtroFornecedor ? 'border-ink-400 bg-ink-100 font-semibold' : ''}`}
-              value={filtroFornecedor}
-              onChange={(e) => setFiltroFornecedor(e.target.value)}
-              aria-label="Mostrar só as cotações desse fornecedor"
-            >
-              <option value="">Todos os fornecedores</option>
-              {fornecedoresCotados.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-            <label className="inline-flex items-center gap-1.5 text-sm text-ink-600">
-              <input type="checkbox" checked={soSemCotacao} onChange={(e) => setSoSemCotacao(e.target.checked)} />
-              Só itens sem cotação ({semCotacao})
-            </label>
-            {filtrosAtivos && (
+            {visao === 'detalhado' && (
               <>
-                <span className="text-xs text-ink-500">
-                  Mostrando <strong className="text-ink-900">{itensVisiveis.length}</strong> de {items.length} itens
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBusca('')
-                    setFiltroFornecedor('')
-                    setSoSemCotacao(false)
-                  }}
-                  className="pill-tab border border-ink-200 py-1 text-xs text-ink-600 hover:bg-ink-50"
+                <select
+                  className={`field-input w-full sm:w-56 py-1.5 text-sm ${filtroFornecedor ? 'border-ink-400 bg-ink-100 font-semibold' : ''}`}
+                  value={filtroFornecedor}
+                  onChange={(e) => setFiltroFornecedor(e.target.value)}
+                  aria-label="Mostrar só as cotações desse fornecedor"
                 >
-                  Limpar filtros
-                </button>
+                  <option value="">Todos os fornecedores</option>
+                  {fornecedoresCotados.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+                <label className="inline-flex items-center gap-1.5 text-sm text-ink-600">
+                  <input type="checkbox" checked={soSemCotacao} onChange={(e) => setSoSemCotacao(e.target.checked)} />
+                  Só itens sem cotação ({semCotacao})
+                </label>
+                {filtrosAtivos && (
+                  <>
+                    <span className="text-xs text-ink-500">
+                      Mostrando <strong className="text-ink-900">{itensVisiveis.length}</strong> de {items.length} itens
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBusca('')
+                        setFiltroFornecedor('')
+                        setSoSemCotacao(false)
+                      }}
+                      className="pill-tab border border-ink-200 py-1 text-xs text-ink-600 hover:bg-ink-50"
+                    >
+                      Limpar filtros
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -687,6 +744,17 @@ export function CompararFornecedoresPage({
           <p className="text-sm text-ink-400 text-center py-10">
             Nenhum item registrado ainda — volte em "Itens da cotação" pra adicionar.
           </p>
+        ) : visao === 'planilha' ? (
+          <PlanilhaComparar
+            items={items}
+            travada={travadaPorOutro}
+            busca={busca}
+            fornecedoresCadastrados={fornecedores.map((f) => f.nome)}
+            nomeDoArquivo={`CUSTO BASE MACRO${codigoCotacao ? ` - ${codigoCotacao}` : ''}${cliente ? ` - ${cliente.replace(/[\\/:*?"<>|]+/g, ' ').trim()}` : ''}.xlsx`}
+            onDefinirPreco={(item, fornecedor, cotacao, valor) => void handleDefinirPreco(item, fornecedor, cotacao, valor)}
+            onDefinirMarca={(item, cotacao, marca) => handleEditarCotacao(item, cotacao.id, { marca })}
+            onEscolher={handleEscolherCotacao}
+          />
         ) : (
           <div className="overflow-x-auto rounded-xl border border-ink-100">
             <datalist id={ID_LISTA_FORNECEDORES}>

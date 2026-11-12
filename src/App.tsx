@@ -1019,6 +1019,8 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
           activeStatus={activeStatus}
           activeResponsavel={activeResponsavel}
           items={items}
+          codigoCotacao={codigoCotacao}
+          cliente={cliente}
           onPatchItem={protegido(patchItemProduct)}
           onGoToCotacoes={() => changeTab('cotacoes')}
           onGoToPrecificacao={() => changeTab('dashboard')}
