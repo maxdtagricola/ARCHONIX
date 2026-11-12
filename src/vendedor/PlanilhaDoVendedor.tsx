@@ -55,6 +55,7 @@ export function PlanilhaDoVendedor({
         descricao: i.descricao,
         marca: i.marca,
         entrega: i.entrega,
+        quantidade: i.quantidade,
         valorUnitario: i.valorUnitario,
         valorTotal: i.valorTotal,
       }))

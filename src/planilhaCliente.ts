@@ -1,9 +1,10 @@
 import * as XLSX from 'xlsx'
 import { calculateItem } from './calc/calculator'
-import { abaComTabelaItens, cellTexto, cellValue, clearCellValue, localizarTabelaItens, normalizar, setCellValue } from './xlsxSheetUtil'
+import { abaComTabelaItens, cellNumero, cellTexto, cellValue, clearCellValue, localizarTabelaItens, normalizar, setCellValue } from './xlsxSheetUtil'
 import { mesmaReferencia } from './importacao/referencias'
 import { parseNumeroFlexivel } from './numeros'
 import { avisar } from './dialogs'
+import { formulasDaAba, refazerFormulas } from './formulasDaPlanilha'
 import { abrirXlsx, aplicarAlteracoes, ehZip, fecharXlsx, renderizarAba, type AlteracaoCelula, type PreviaOriginal } from './xlsxOriginal'
 import type { QuoteItem } from './types'
 
@@ -34,6 +35,16 @@ export interface ItemComValorNaPlanilha {
   valorDoSite: number
 }
 
+/** Item cuja quantidade na planilha do cliente não é a da cotação — o total da linha (a conta da
+ * planilha) sai com a quantidade dela. */
+export interface QuantidadeDiferente {
+  referencia: string
+  descricao: string
+  linha: number
+  naPlanilha: number
+  naCotacao: number
+}
+
 export interface PlanilhaAtualizada {
   /** O arquivo pronto pra baixar/enviar: o mesmo que o cliente mandou, só com as células preenchidas. */
   arquivo: Blob
@@ -45,6 +56,7 @@ export interface PlanilhaAtualizada {
   paginaImpressao: string
   itensAtualizados: number
   itensComValorNaPlanilha: ItemComValorNaPlanilha[]
+  quantidadesDiferentes: QuantidadeDiferente[]
 }
 
 const TIPOS_POR_EXTENSAO: Record<string, { bookType: XLSX.BookType; mime: string }> = {
@@ -120,6 +132,7 @@ export function gerarPlanilhaAtualizada(
         descricao: it.product.descricao,
         marca: it.product.marca,
         entrega: it.product.prazoEntrega,
+        quantidade: it.product.qtd,
         valorUnitario: resultado.precoVendaUnitario,
         valorTotal: resultado.precoVendaTotal,
       }
@@ -134,6 +147,8 @@ export interface LinhaParaPreencher {
   descricao: string
   marca: string
   entrega: string
+  /** A quantidade da cotação (pra avisar quando a da planilha é outra). */
+  quantidade?: number
   valorUnitario: number
   valorTotal: number
 }
@@ -154,9 +169,13 @@ export function preencherPlanilhaDoCliente(
   const { ws, nome: nomeAba } = abaComTabelaItens(workbook)
 
   const tabela = localizarTabelaItens(ws)
+  // as fórmulas como vieram (o total da linha = unitário × quantidade, a soma no fim): refeitas depois
+  // de preencher, pra prévia mostrar a mesma conta que o Excel faz ao abrir o arquivo
+  const formulas = formulasDaAba(ws)
+  const temFormula = (linha: number, coluna: number) => formulas.has(XLSX.utils.encode_cell({ r: linha - 1, c: coluna - 1 }))
   let itensAtualizados = 0
-  let somaVlrTotal = 0
   const itensComValorNaPlanilha: ItemComValorNaPlanilha[] = []
+  const quantidadesDiferentes: QuantidadeDiferente[] = []
   // o que muda na planilha: aplicado na cópia lida pelo "xlsx" (pras contas abaixo) e anotado pra
   // depois aplicar no arquivo original
   const alteracoes: AlteracaoCelula[] = []
@@ -189,11 +208,21 @@ export function preencherPlanilhaDoCliente(
             valorDoSite: Number((ehUnitario ? item.valorUnitario : item.valorTotal).toFixed(2)),
           })
         } else {
+          const unitario = Number(item.valorUnitario.toFixed(2))
+          const qtdNaPlanilha = tabela.colQuant > -1 ? cellNumero(ws, r, tabela.colQuant) : undefined
+          if (qtdNaPlanilha !== undefined && item.quantidade !== undefined && Math.abs(qtdNaPlanilha - item.quantidade) > 1e-9) {
+            quantidadesDiferentes.push({ referencia: referenciaTexto, descricao: item.descricao, linha: r, naPlanilha: qtdNaPlanilha, naCotacao: item.quantidade })
+          }
           if (tabela.colVlrUnt > -1) {
-            escrever(r, tabela.colVlrUnt, Number(item.valorUnitario.toFixed(2)))
+            escrever(r, tabela.colVlrUnt, unitario)
           }
           if (tabela.colVlrTotal > -1) {
-            escrever(r, tabela.colVlrTotal, Number(item.valorTotal.toFixed(2)))
+            // a conta da linha, com o unitário que ficou na célula: o total bate com unitário × quantidade.
+            // Com fórmula na célula, ela é refeita lá embaixo do mesmo jeito que o Excel faz (o valor do site
+            // fica só se a fórmula for de um tipo que o site não refaz)
+            const qtd = qtdNaPlanilha ?? item.quantidade
+            const daConta = qtd !== undefined && tabela.colVlrUnt > -1 && !temFormula(r, tabela.colVlrTotal)
+            escrever(r, tabela.colVlrTotal, daConta ? Number((unitario * qtd).toFixed(2)) : Number(item.valorTotal.toFixed(2)))
           }
           // marca e prazo que o cliente já tinha escrito ficam; célula vazia ou só com "COTAR" recebe
           const escritas = new Set<number>()
@@ -214,20 +243,32 @@ export function preencherPlanilhaDoCliente(
         }
       }
     }
-
-    if (tabela.colVlrTotal > -1) {
-      // número ou texto ("R$ 50,00") — o que o cliente já tinha escrito também entra no total geral
-      somaVlrTotal += valorNaCelula(ws, r, tabela.colVlrTotal) ?? 0
-    }
   }
 
+  // as fórmulas da planilha (o total de cada linha e a soma no fim), com os valores novos
+  const gravarResultado = (linha: number, coluna: number, valor: number) => alteracoes.push({ linha, coluna, valor })
+  refazerFormulas(ws, formulas, gravarResultado)
+
+  // o total geral escrito à mão (sem fórmula) ao lado de "VALOR TOTAL": a soma dos itens, só das linhas de
+  // cima dele — antes somava também a própria célula do total, com o valor antigo dela
   for (let r = 1; r <= tabela.maxRow; r++) {
     for (let c = 1; c <= tabela.maxCol; c++) {
       const texto = normalizar(cellValue(ws, r, c))
       if (texto.startsWith('valo total') || texto.startsWith('valor total')) {
         for (let c2 = c + 1; c2 <= tabela.maxCol; c2++) {
           if (typeof cellValue(ws, r, c2) === 'number') {
-            escrever(r, c2, Number(somaVlrTotal.toFixed(2)))
+            if (!temFormula(r, c2) && tabela.colVlrTotal > -1) {
+              let soma = 0
+              for (let r2 = tabela.linhaCabecalho + 1; r2 < r; r2++) {
+                // número ou texto ("R$ 50,00") — o que o cliente já tinha escrito também entra no total geral
+                if (!temFormula(r2, tabela.colVlrTotal) || !/SUM|SOMA/i.test(formulas.get(XLSX.utils.encode_cell({ r: r2 - 1, c: tabela.colVlrTotal - 1 }))!.formula)) {
+                  soma += valorNaCelula(ws, r2, tabela.colVlrTotal) ?? 0
+                }
+              }
+              escrever(r, c2, Number(soma.toFixed(2)))
+              // fórmula que dependa desse total (desconto, frete…)
+              refazerFormulas(ws, formulas, gravarResultado)
+            }
             break
           }
         }
@@ -236,7 +277,7 @@ export function preencherPlanilhaDoCliente(
   }
 
   const tipo = tipoDoArquivo(nomeArquivo)
-  const resumo = { itensAtualizados, itensComValorNaPlanilha }
+  const resumo = { itensAtualizados, itensComValorNaPlanilha, quantidadesDiferentes }
   if (ehZip(bytes) && tipo.bookType !== 'ods') {
     try {
       const arquivos = abrirXlsx(bytes)

@@ -239,5 +239,6 @@ export async function gerarPlanilhaPadraoDosValores(
     paginaImpressao: paginaDeImpressao(previa, titulo),
     itensAtualizados: itens.length,
     itensComValorNaPlanilha: [],
+    quantidadesDiferentes: [],
   }
 }

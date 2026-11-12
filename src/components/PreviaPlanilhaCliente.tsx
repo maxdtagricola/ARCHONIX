@@ -57,6 +57,23 @@ export function PreviaPlanilhaCliente({ resultado, gerada = false }: { resultado
         </div>
       )}
 
+      {resultado.quantidadesDiferentes.length > 0 && (
+        <div role="status" aria-label="Quantidades diferentes" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <p className="mb-1 font-semibold">
+            {resultado.quantidadesDiferentes.length} item(ns) com quantidade diferente da cotação — o total da linha na planilha usa a quantidade
+            dela:
+          </p>
+          <ul className="space-y-0.5">
+            {resultado.quantidadesDiferentes.map((q) => (
+              <li key={`${q.linha}-${q.referencia}`}>
+                <span className="font-mono">{q.referencia}</span>
+                {q.descricao ? ` — ${q.descricao}` : ''}: {q.naPlanilha} na planilha · {q.naCotacao} na cotação
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* prévia fiel: a planilha como ela é (fundo branco de papel, cores e bordas dela), também no modo escuro */}
       <div
         data-testid="previa-planilha-cliente"
