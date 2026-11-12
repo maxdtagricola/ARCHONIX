@@ -52,5 +52,6 @@ export function acharNcmNasPalavras(
 
 /** O documento fala em NCM (ou classificação fiscal) em algum lugar — normalmente o título da coluna. */
 export function documentoMencionaNcm(texto: string): boolean {
-  return /\bNCM\b|CLASSIF\S*\s*FISCAL/i.test(texto)
+  // NBM: o nome antigo do NCM, que alguns sistemas ainda usam no título da coluna (CRUZ ATACADISTA)
+  return /\bNCM\b|\bNBM\b|CLASSIF\S*\s*FISCAL/i.test(texto)
 }

@@ -2,6 +2,7 @@ import { parseNumeroFlexivel } from '../numeros'
 import { normalizarNcm } from './ncm'
 import { normalizarReferencia } from './referencias'
 import { normalizarTexto, type LinhaTexto } from './textoPosicionado'
+import { numerosDaLinha, resolverValores, type NumeroLido } from './valoresDaLinha'
 
 // -----------------------------------------------------------------------
 // Como cada fornecedor devolve a cotação. Cada um usa o próprio sistema e o
@@ -48,6 +49,11 @@ export interface LinhaDoRetorno {
   /** O fornecedor marcou que não tem (no momento) — "*" da INGÁ, "S/ ESTOQUE" na planilha… */
   semEstoque?: boolean
   observacao?: string
+  /** Os números da parte de valores da linha, como vieram — na foto, quando a coluna de cada um pode ter
+   * se perdido, a conta com a quantidade do item decide qual é o unitário e qual é o total. */
+  numeros?: NumeroLido[]
+  /** O leitor do padrão já sabe que essa linha precisa ser conferida (e por quê). */
+  conferir?: string
 }
 
 export interface PerfilFornecedor {
@@ -64,8 +70,11 @@ export interface PerfilFornecedor {
   padrao: string
   /** UF de origem quando o documento não diz outra. */
   uf?: string
-  /** Lê as linhas de item de PDF/imagem. Sem ele (planilha), vale a leitura de planilha. */
-  lerLinhas?: (linhas: LinhaTexto[], textoCompleto: string) => LinhaDoRetorno[]
+  /** Lê as linhas de item de PDF/imagem. Sem ele (planilha), vale a leitura de planilha. `ocr`: o texto
+   * veio de foto/print. */
+  lerLinhas?: (linhas: LinhaTexto[], textoCompleto: string, ocr: boolean) => LinhaDoRetorno[]
+  /** Os valores das linhas já vêm com o desconto do documento (não precisa avisar do desconto no total). */
+  descontoJaNosItens?: boolean
 }
 
 const UNIDADES = 'UN|UND|PC|PÇ|PCS|JG|CJ|KT|KIT|CX|PR|PAR|PCT|MT|KG|LT|L|M|RL|FD|GL|SC'
@@ -226,12 +235,14 @@ function sistemaToledoPorTrechos(linha: LinhaTexto): { codigo: string; descricao
 }
 
 function lerSistemaToledo(ufPadrao: string) {
-  return (linhas: LinhaTexto[]): LinhaDoRetorno[] => {
+  return (linhas: LinhaTexto[], _texto: string, ocr: boolean): LinhaDoRetorno[] => {
     const resultado: LinhaDoRetorno[] = []
     for (const linha of linhas) {
-      const m = linha.texto.match(RE_TOLEDO)
+      // na foto: o travessão que o OCR põe na frente do número ("—10,0000") e o "7" lido como "T"
+      const texto = ocr ? linha.texto.replace(/[—–]+(?=\d)/g, '').replace(/^[TIl]\s+/, '7 ') : linha.texto
+      const m = texto.match(RE_TOLEDO)
       const lida = m
-        ? { codigo: m[2], descricao: m[3].trim(), ncm: m[4], nums: numerosDe(m[5]), uf: m[6] }
+        ? { codigo: m[2], descricao: m[3].trim(), ncm: m[4], nums: numerosDe(m[5]), uf: m[6], valores: m[5] }
         : sistemaToledoPorTrechos(linha)
       if (!lida) continue
       // Qtde, Unitário, Total (+ ST, DIFAL/IPI, Total com impostos no PDF)
@@ -246,10 +257,129 @@ function lerSistemaToledo(ufPadrao: string) {
         ncm: normalizarNcm(lida.ncm),
         uf: lida.uf ?? ufPadrao,
         ...(ipi ? { observacao: `IPI/DIFAL R$ ${ipi.toFixed(2).replace('.', ',')}` } : {}),
+        // na foto uma coluna pode sumir (a quantidade, no print da TOLEAGRI): a conta com a quantidade do
+        // item decide depois quem é quem
+        ...(ocr ? { numeros: 'valores' in lida && lida.valores ? numerosDaLinha(lida.valores, true) : lida.nums.map((valor) => ({ valor, casas: 2 })) } : {}),
       })
     }
     return resultado
   }
+}
+
+// --- PAVONI ------------------------------------------------------------------------------
+// Cada oferta em três linhas: a descrição; "Ord  Marca  Quant.  Valor Uni  ST  IPI %  V.Unit c/ST+IPI
+// Vlr Total  CST QM DC AL.ICMS  Entrega"; e "código - marca - NCM 00000000 - PESO". O mesmo código pode
+// vir várias vezes, uma por marca (original, importado, paralelo…). Entrega "Negativa" = não tem; "Saldo
+// Insuficiente" (quebrado nas duas linhas) = tem menos que o pedido.
+const RE_PAVONI_VALORES = /^(\d{1,3})\s+(.*?)\s*(\d+,\d{2})\s+(\d[\d.]*,\d{2})\s+(\d[\d.]*,\d{2})\s+(\d[\d.]*,\d{2})\s*%\s+(\d[\d.]*,\d{2})\s+(\d[\d.]*,\d{2})\s+\d{3}\b(.*)$/
+const RE_PAVONI_CODIGO = /^(\S+)\s+-\s+(.*?)\s*-\s*NCM\s+(\d{8})/
+
+function lerPavoni(linhas: LinhaTexto[]): LinhaDoRetorno[] {
+  const resultado: LinhaDoRetorno[] = []
+  linhas.forEach((linha, i) => {
+    const v = linha.texto.match(RE_PAVONI_VALORES)
+    const c = linhas[i + 1]?.texto.match(RE_PAVONI_CODIGO)
+    if (!v || !c) return
+    const quantidade = numero(v[3])
+    const unitario = numero(v[4])
+    const total = numero(v[8])
+    const entrega = normalizarTexto(v[9]).match(/\b(IMEDIATA|NEGATIVA|\d+\s*DIAS?.*)$/)?.[1]
+    const vizinhas = normalizarTexto(`${linhas[i - 1]?.texto ?? ''} ${linha.texto} ${linhas[i + 1]?.texto ?? ''}`)
+    const saldoInsuficiente = /\bSALDO\b/.test(vizinhas) && /\bINSUFICIENTE\b/.test(vizinhas)
+    resultado.push({
+      codigos: [c[1]],
+      descricao: (linhas[i - 1]?.texto ?? '').replace(/\s{3,}.*$/, '').trim(),
+      quantidade,
+      valorUnitario: unitario,
+      valorTotal: total,
+      ncm: normalizarNcm(c[3]),
+      marca: c[2].trim(),
+      ...(entrega && entrega !== 'NEGATIVA' ? { prazo: entrega } : {}),
+      ...(entrega === 'NEGATIVA' || !unitario ? { semEstoque: true } : {}),
+      ...(saldoInsuficiente ? { observacao: 'SALDO INSUFICIENTE' } : {}),
+    })
+  })
+  return resultado
+}
+
+// --- ENGEPEÇAS (Peças EGP) ---------------------------------------------------------------
+// Em duas linhas: "código - descrição | NCM: 0000.00.00" e "item  qtd  marca  valor  ICMS%  IPI%  ST
+// total(un)  total  entrega" — entrega "INDISPONIVEL" (com valor zero) = não tem.
+const RE_ENGEPECAS_CODIGO = /^(\S+)\s+-\s+(.*?)\s*\|\s*NCM\s*:?\s*([\d.]*)\s*$/
+const RE_ENGEPECAS_VALORES = /^(\d{1,3})\s+(\d+(?:,\d+)?)\s+(.*)$/
+
+function lerEngepecas(linhas: LinhaTexto[], _texto: string, ocr: boolean): LinhaDoRetorno[] {
+  const resultado: LinhaDoRetorno[] = []
+  linhas.forEach((linha, i) => {
+    const c = linha.texto.match(RE_ENGEPECAS_CODIGO)
+    const v = linhas[i + 1]?.texto.match(RE_ENGEPECAS_VALORES)
+    if (!c || !v) return
+    const quantidade = numero(v[2])
+    const resto = v[3]
+    const marca = resto.match(/^(.*?)\s*\d[\d.]*,\d{2}/)?.[1].trim()
+    const entrega = normalizarTexto(resto).match(/\b(IMEDIATO|INDISPONIVEL|\d+\s*DIAS?.*)$/)?.[1]
+    const lidos = resolverValores(numerosDaLinha(resto, ocr), quantidade ?? 0)
+    const semEstoque = entrega === 'INDISPONIVEL' || !lidos.unitario
+    resultado.push({
+      codigos: [c[1]],
+      descricao: c[2].trim(),
+      quantidade,
+      ...(semEstoque ? {} : { valorUnitario: lidos.unitario, valorTotal: lidos.total }),
+      ...(normalizarNcm(c[3]) ? { ncm: normalizarNcm(c[3]) } : {}),
+      ...(marca ? { marca } : {}),
+      ...(entrega && !semEstoque ? { prazo: entrega } : {}),
+      ...(semEstoque ? { semEstoque: true } : {}),
+      ...(lidos.conferir && !semEstoque ? { conferir: lidos.conferir } : {}),
+    })
+  })
+  return resultado
+}
+
+// --- ROMAR F MANN ------------------------------------------------------------------------
+// "Item  Produto  Descrição  NCM  Qtde UN  Valor Un.  Unit.C/IPI  % Aliq.IPI  Total" — o "Valor Un." é o de
+// tabela; o que fecha com o total é o "Unit.C/IPI" (já com o desconto). As linhas de baixo do item repetem
+// o código e trazem os códigos alternativos ("GE35 - 578189, 6202734M1, 86620026, H161529,"). Antes do
+// código: "*" = entrega parcial, "**" = entrega de 50 a 60 dias; os demais, imediata.
+const RE_ROMAR = /^(\d{1,3})\s+(\*{0,2})(\S+)\s+(.*?)\s+(\d{8})\s+(\d[\d.]*(?:,\d+)?)\s+([A-Z]{2,3})\s+(\d[\d.]*,\d{2})\s+(\d[\d.]*,\d{2})\s+(\d[\d.]*,\d{2})\s+(\d[\d.]*,\d{2})\s*$/
+
+function lerRomar(linhas: LinhaTexto[]): LinhaDoRetorno[] {
+  const resultado: LinhaDoRetorno[] = []
+  linhas.forEach((linha, i) => {
+    const m = linha.texto.match(RE_ROMAR)
+    if (!m) return
+    // os alternativos: o que tem cara de código nas linhas de baixo, até o próximo item
+    const alternativos: string[] = []
+    for (let k = i + 1; k < linhas.length && k <= i + 4; k++) {
+      const texto = linhas[k].texto
+      if (RE_ROMAR.test(texto) || /^TOTAIS\b/i.test(texto.trim())) break
+      // descrição escrita com as letras separadas ("T R A N S P O R T A D O R - H 1 3 1 0 9 8 ,") não é lista de códigos
+      if (/(?:\b\S\s){4,}/.test(texto)) continue
+      for (const palavra of texto.split(/[\s,;]+/)) if (pareceCodigo(palavra) && !alternativos.includes(palavra)) alternativos.push(palavra)
+    }
+    const quantidade = numero(m[6])
+    const tabela = numero(m[8])
+    const unitario = numero(m[9])
+    const total = numero(m[11])
+    const desconto = tabela && unitario && unitario < tabela ? (1 - unitario / tabela) * 100 : 0
+    resultado.push({
+      codigos: [m[3], ...alternativos.filter((a) => normalizarReferencia(a) !== normalizarReferencia(m[3]))],
+      descricao: m[4].replace(/\s*-\s*$/, '').trim(),
+      quantidade,
+      valorUnitario: unitario,
+      valorTotal: total,
+      ncm: normalizarNcm(m[5]),
+      uf: 'RS',
+      prazo: m[2] === '**' ? 'ENTREGA DE 50 A 60 DIAS' : 'IMEDIATO',
+      ...(m[2] === '*' || desconto >= 0.5
+        ? {
+            observacao: [m[2] === '*' ? 'ENTREGA PARCIAL' : '', desconto >= 0.5 ? `desconto de ${Math.round(desconto * 10) / 10}% (tabela R$ ${tabela!.toFixed(2).replace('.', ',')})` : '']
+              .filter(Boolean)
+              .join(' · '),
+          }
+        : {}),
+    })
+  })
+  return resultado
 }
 
 // --- MINAS -------------------------------------------------------------------------------
@@ -342,6 +472,35 @@ export const PERFIS_FORNECEDORES: PerfilFornecedor[] = [
     padrao: 'nosso código na coluna "Cód.Original", com a marca ao lado',
     uf: 'PR',
     lerLinhas: lerMinas,
+  },
+  {
+    chave: 'PAVONI',
+    nome: 'PAVONI',
+    raizesCnpj: [],
+    nomeNoDocumento: /\bPAVONI\b/,
+    nomeDoArquivo: /PAVONI/,
+    padrao: 'uma oferta por marca (o mesmo código pode vir várias vezes), código e NCM na linha de baixo, entrega "Negativa" = não tem',
+    lerLinhas: lerPavoni,
+  },
+  {
+    chave: 'ENGEPECAS',
+    nome: 'ENGEPECAS',
+    raizesCnpj: [],
+    nomeNoDocumento: /ENGEPECAS|PECAS EGP/,
+    nomeDoArquivo: /ENGEPECAS/,
+    padrao: 'código e NCM numa linha, quantidade, marca e valores na de baixo; "INDISPONIVEL" = não tem',
+    lerLinhas: lerEngepecas,
+  },
+  {
+    chave: 'ROMAR',
+    nome: 'ROMAR MANN',
+    raizesCnpj: ['90316407'],
+    nomeNoDocumento: /ROMAR F\.? MANN/,
+    nomeDoArquivo: /ROMAR/,
+    padrao: 'vale o "Unit.C/IPI" (com desconto); códigos alternativos nas linhas de baixo; "**" = entrega de 50 a 60 dias',
+    uf: 'RS',
+    lerLinhas: lerRomar,
+    descontoJaNosItens: true,
   },
   {
     chave: 'REDEPARTS',

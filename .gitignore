@@ -54,3 +54,6 @@ scripts/blender/__pycache__/
 dados-restaurado*.json
 *-restaurado*.json
 notas-recuperadas*.json
+
+# retornos reais de fornecedores (PDF, foto, planilha) pra testar a importação — nunca versionar
+retornodefornecedor/

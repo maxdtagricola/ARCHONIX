@@ -110,11 +110,24 @@ export function compararCodigo(nosso: string, dele: string, ocr = false): Casame
 
 /** Diferença de um caractere entre o nosso código e o do fornecedor — só como sugestão (pode ser
  * outra peça: HXE27047 × HXE27048). */
-export function codigoProximo(nosso: string, dele: string): CasamentoCodigo | undefined {
-  const n = normalizarReferencia(nosso)
+export function codigoProximo(nosso: string, dele: string, ocr = false): CasamentoCodigo | undefined {
+  // na foto, O/0, S/5… já contam como a mesma letra: "ACVWO410880" fica a um caractere de "ACW0410880"
+  const forma = ocr ? referenciaTolerante : normalizarReferencia
+  const n = forma(nosso)
   for (const pedaco of dele.split('/')) {
-    const d = normalizarReferencia(pedaco)
+    const d = forma(pedaco)
     if (n !== d && diferencaDeUmCaractere(n, d)) return { tipo: 'proximo', detalhe: `um caractere diferente (${pedaco.trim()})` }
   }
   return undefined
+}
+
+/** Código com o prefixo do fornecedor separado por hífen ("01-859058" da CRUZ ATACADISTA: o 01 é a marca
+ * no sistema dele) — o nosso é o que vem depois do hífen. Só com prefixo curto e base de tamanho razoável,
+ * pra não confundir com código que tem hífen de verdade ("KK-45376"). */
+export function codigoComPrefixo(nosso: string, dele: string): CasamentoCodigo | undefined {
+  const m = dele.trim().match(/^([A-Z0-9]{1,3})-(.+)$/i)
+  if (!m) return undefined
+  const base = normalizarReferencia(m[2])
+  if (base.length < 5 || base !== normalizarReferencia(nosso)) return undefined
+  return { tipo: 'variacao', detalhe: `prefixo ${m[1]}-` }
 }

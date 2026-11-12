@@ -105,6 +105,7 @@ export function ImportarCotacaoFornecedorModal({
   const [linhas, setLinhas] = useState<LinhaEditavel[] | undefined>(undefined)
   const [padrao, setPadrao] = useState<{ fornecedor: string; descricao: string } | undefined>(undefined)
   const [naoEncontrados, setNaoEncontrados] = useState<LinhaNaoEncontrada[]>([])
+  const [avisos, setAvisos] = useState<string[]>([])
 
   async function handleArquivoSelecionado(file: File) {
     setLendo(true)
@@ -113,6 +114,7 @@ export function ImportarCotacaoFornecedorModal({
     setLinhas(undefined)
     setPadrao(undefined)
     setNaoEncontrados([])
+    setAvisos([])
     setNomeArquivo(file.name)
     try {
       const resultado = await importarCotacaoFornecedor(file, items, fornecedores)
@@ -151,11 +153,13 @@ export function ImportarCotacaoFornecedorModal({
       setAvisoLeituraFraca(resultado.avisoLeituraFraca)
       setPadrao(resultado.padrao)
       setNaoEncontrados(resultado.naoEncontrados)
+      setAvisos(resultado.avisos ?? [])
       setLinhas(
         resultado.itens.map((item) => ({
           ...item,
-          // código só "parecido em um caractere" pode ser outra peça — fica pra marcar na mão
-          incluir: item.valorUnitarioDetectado !== undefined && item.casamento !== 'proximo',
+          // código só "parecido em um caractere" pode ser outra peça, e valor que não fecha a conta pode
+          // estar errado — os dois ficam pra marcar na mão, depois de conferir
+          incluir: item.valorUnitarioDetectado !== undefined && item.casamento !== 'proximo' && !item.conferir,
           valorUnitarioTexto: valorParaTexto(item.valorUnitarioDetectado),
           valorTotalTexto: valorParaTexto(item.valorTotalDetectado),
           marcaTexto: item.marcaDetectada ?? '',
@@ -229,7 +233,8 @@ export function ImportarCotacaoFornecedorModal({
             <h3 className="font-display text-lg font-semibold text-ink-900">Importar cotação do fornecedor</h3>
             <p className="text-sm text-ink-400">
               Planilha, PDF ou foto/print da cotação — os fornecedores conhecidos (SOLUS, INGÁ, CAMBUCI, MG, TOLEAGRI, MINAS,
-              REDEPARTS) são lidos no padrão de cada um; os outros, pela Referência.
+              REDEPARTS, PAVONI, ENGEPEÇAS, ROMAR MANN) são lidos no padrão de cada um; os outros, pela Referência. Cada valor
+              é conferido pela conta (unitário × quantidade = total): o que não fecha vem desmarcado, pra conferir.
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-ink-400 hover:text-ink-700 text-xl leading-none px-1">
@@ -269,6 +274,17 @@ export function ImportarCotacaoFornecedorModal({
               {fornecedorDetectado && (
                 <p className="text-xs text-emerald-700">
                   Fornecedor identificado no arquivo: <strong>{fornecedorDetectado}</strong> — confirme ou troque abaixo.
+                </p>
+              )}
+              {avisos.map((a) => (
+                <p key={a} role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {a}
+                </p>
+              ))}
+              {(linhas ?? []).some((l) => l.conferir) && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {(linhas ?? []).filter((l) => l.conferir).length} item(ns) com valores que não fecham a conta (unitário × quantidade ≠ total) —
+                  vieram desmarcados: confira no documento e marque se estiver certo.
                 </p>
               )}
               {padrao && (
@@ -343,6 +359,11 @@ export function ImportarCotacaoFornecedorModal({
                                   </span>
                                 )}
                               </p>
+                              {l.conferir && (
+                                <p className="mt-0.5 text-[11px] font-medium text-amber-800" role="note" aria-label={`Conferir ${l.referencia}`}>
+                                  ⚠ {l.conferir}
+                                </p>
+                              )}
                               {(selo || l.semEstoque || l.ufOrigem || l.observacao) && (
                                 <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
                                   {selo && (

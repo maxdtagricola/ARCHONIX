@@ -5,9 +5,10 @@ import { ocrDeImagem } from './importacao/ocr'
 import { agruparEmLinhas, normalizarTexto, type LinhaTexto, type PaginaPosicionada } from './importacao/textoPosicionado'
 import { acharReferenciaNaLinha } from './importacao/referencias'
 import { acharNcmNasPalavras, documentoMencionaNcm, normalizarNcm } from './importacao/ncm'
-import { ORDEM_CASAMENTO, codigoProximo, compararCodigo, type CasamentoCodigo, type TipoCasamento } from './importacao/codigosFornecedor'
+import { ORDEM_CASAMENTO, codigoComPrefixo, codigoProximo, compararCodigo, type CasamentoCodigo, type TipoCasamento } from './importacao/codigosFornecedor'
 import { identificarPerfil, textoDeIndisponivel, type LinhaDoRetorno, type PerfilFornecedor } from './importacao/perfisFornecedores'
-import { valoresMonetariosNoTexto } from './numeros'
+import { numerosDaLinha, quantidadesDaLinha, resolverValores } from './importacao/valoresDaLinha'
+import { formatarNumeroBR, formatarNumeroCurtoBR, valoresMonetariosNoTexto } from './numeros'
 import type { QuoteItem } from './types'
 
 /** Uma oferta do arquivo importado casada com um item da cotação atual. O mesmo item pode ter mais de
@@ -27,6 +28,9 @@ export interface ItemDetectadoFornecedor {
   /** true quando unitário × quantidade do item bate com o total encontrado — a leitura "fecha a
    * conta", então é bem provável que esteja certa. */
   conferido?: boolean
+  /** A leitura não fechou a conta (vários valores na linha, total que não bate, dígito que o OCR pode
+   * ter trocado): o motivo. A linha entra desmarcada, pra alguém conferir antes. */
+  conferir?: string
   marcaDetectada?: string
   prazoDetectado?: string
   /** NCM que o fornecedor informou pro item (formato 0000.00.00) — fica guardado na cotação dele, e o
@@ -67,6 +71,8 @@ export interface ResultadoImportacaoFornecedor {
   /** Preenchido quando o arquivo foi lido (sem erro) mas não achou nada aproveitável — ex.: imagem
    * borrada, PDF escaneado que o OCR não deu conta. */
   avisoLeituraFraca?: string
+  /** O que o documento diz e não está nas linhas dos itens (desconto geral no rodapé…). */
+  avisos?: string[]
 }
 
 export interface FornecedorConhecido {
@@ -85,7 +91,8 @@ function extensaoDoArquivo(nome: string): string {
  * raiz de 8 dígitos vale pra qualquer filial), depois pelo nome (o mais comprido que aparecer, pra
  * "TRACTOR TERRA PEÇAS" ganhar de "TRACTOR"). */
 function detectarFornecedorConhecido(texto: string, fornecedores: FornecedorConhecido[]): string | undefined {
-  const cnpjsNoTexto = (texto.match(/\d{2}\.?\d{3}\.?\d{3}\s*\/?\s*\d{4}\s*-?\s*\d{2}/g) ?? []).map((c) => c.replace(/\D/g, ''))
+  // na foto o OCR às vezes lê o ponto do CNPJ como vírgula ("22.649,498/0009-08")
+  const cnpjsNoTexto = (texto.match(/\d{2}[.,]?\d{3}[.,]?\d{3}\s*\/?\s*\d{4}\s*-?\s*\d{2}/g) ?? []).map((c) => c.replace(/\D/g, ''))
   for (const f of fornecedores) {
     const cnpj = (f.cnpj ?? '').replace(/\D/g, '')
     if (cnpj.length === 14 && cnpjsNoTexto.includes(cnpj)) return f.nome
@@ -94,65 +101,77 @@ function detectarFornecedorConhecido(texto: string, fornecedores: FornecedorConh
     const raiz = (f.cnpj ?? '').replace(/\D/g, '').slice(0, 8)
     if (raiz.length === 8 && cnpjsNoTexto.some((c) => c.startsWith(raiz))) return f.nome
   }
-  const normal = normalizarTexto(texto)
-  const porNome = fornecedores
+  return fornecedorPeloNome(texto, fornecedores)
+}
+
+/** O fornecedor do cadastro cujo nome aparece no texto (o mais comprido, pra "TRACTOR TERRA PEÇAS" ganhar
+ * de "TRACTOR"). "AGRI-PEÇAS" no documento é o "AGRIPECAS" do cadastro, e "DALL OGLIO" o "DALL'OGLIO":
+ * hífen, apóstrofo e espaço não contam, nem de um lado nem do outro. */
+function fornecedorPeloNome(texto: string, fornecedores: FornecedorConhecido[]): string | undefined {
+  const semSinais = (t: string) => normalizarTexto(t).replace(/[-'’´`]/g, '')
+  const alvo = semSinais(texto)
+  return fornecedores
     .filter((f) => {
-      const nome = normalizarTexto(f.nome)
-      return nome.length >= 3 && new RegExp(`(^|[^A-Z0-9])${nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Z0-9]|$)`).test(normal)
+      const nome = semSinais(f.nome)
+      if (nome.length < 3) return false
+      const escapado = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, ' ?')
+      return new RegExp(`(^|[^A-Z0-9])${escapado}([^A-Z0-9]|$)`).test(alvo)
     })
-    .sort((a, b) => b.nome.length - a.nome.length)
-  return porNome[0]?.nome
+    .sort((a, b) => b.nome.length - a.nome.length)[0]?.nome
 }
 
-/** Escolhe unitário/total entre os valores de dinheiro achados junto da referência, usando a
- * quantidade do item pra conferir: o par em que unitário × quantidade = total é o certo (mesmo que
- * apareçam outros valores na linha, tipo IPI, desconto ou preço de lista). Sem par que feche a
- * conta, o primeiro valor é o unitário e um seguinte maior ou igual a ele, o total. */
-export function escolherUnitarioETotal(
-  valores: number[],
-  quantidade: number,
-  /** Quantidades que aparecem na mesma linha — se o fornecedor atende só parte, unitário × uma delas
-   * (menor que a pedida) = total, e essa é a quantidade que ele atende. */
-  quantidadesNaLinha: number[] = [],
-): { unitario?: number; total?: number; conferido: boolean; quantidade?: number } {
-  if (valores.length === 0) return { conferido: false }
-  const qtd = quantidade > 0 ? quantidade : 1
-  const fecha = (unitario: number, vezes: number, total: number) => Math.abs(unitario * vezes - total) <= Math.max(0.02, total * 0.005)
-  for (let i = 0; i < valores.length; i++) {
-    for (let j = 0; j < valores.length; j++) {
-      if (i !== j && fecha(valores[i], qtd, valores[j])) return { unitario: valores[i], total: valores[j], conferido: true }
-    }
+/** Quem é o fornecedor do arquivo, do mais pro menos certo: o do cadastro que aparece no documento (CNPJ
+ * ou nome); o do padrão reconhecido pelo conteúdo (um print da MG salvo como "TOLEAGRI.jpeg" é da MG);
+ * e só então o nome do arquivo ("AGRIPECAS 599768.pdf"). */
+function fornecedorDoArquivo(texto: string, nomeArquivo: string, fornecedores: FornecedorConhecido[]): string | undefined {
+  const noDocumento = detectarFornecedorConhecido(texto, fornecedores)
+  if (noDocumento) return noDocumento
+  const peloConteudo = identificarPerfil(texto, '')
+  if (peloConteudo) {
+    // o nome do cadastro, se ele estiver lá (pela raiz do CNPJ ou pelo nome do padrão)
+    const raiz = (f: FornecedorConhecido) => (f.cnpj ?? '').replace(/\D/g, '').slice(0, 8)
+    return (
+      fornecedores.find((f) => raiz(f).length === 8 && peloConteudo.raizesCnpj.includes(raiz(f)))?.nome ??
+      fornecedorPeloNome(peloConteudo.nome, fornecedores) ??
+      peloConteudo.nome
+    )
   }
-  for (const parcial of quantidadesNaLinha) {
-    if (!(parcial > 0 && parcial < qtd)) continue
-    for (let i = 0; i < valores.length; i++) {
-      // a própria quantidade escrita como valor ("2,00") não é o unitário
-      if (valores[i] === parcial) continue
-      for (let j = 0; j < valores.length; j++) {
-        if (i !== j && fecha(valores[i], parcial, valores[j])) {
-          return { unitario: valores[i], total: valores[j], conferido: true, quantidade: parcial }
-        }
-      }
-    }
-  }
-  // a quantidade às vezes vem escrita como valor ("10,00") antes do preço — não é o unitário
-  const candidatos = valores.length >= 2 && quantidade > 0 && valores[0] === quantidade ? valores.slice(1) : valores
-  // quantidade 1 (ou um valor só): unitário = total
-  if (candidatos.length === 1) return { unitario: candidatos[0], total: qtd === 1 ? candidatos[0] : undefined, conferido: false }
-  const [unitario, ...resto] = candidatos
-  const total = resto.find((v) => v >= unitario)
-  return { unitario, total, conferido: false }
+  const arquivo = nomeArquivo.replace(/\.[a-z0-9]+$/i, '').replace(/_+/g, ' ')
+  return fornecedorPeloNome(arquivo, fornecedores) ?? identificarPerfil('', nomeArquivo)?.nome
 }
 
-const PRAZO_NO_TEXTO = /\b(IMEDIATO|PRONTA ENTREGA|\d{1,3}\s*(?:DIAS?(?:\s+[ÚU]TEIS)?|D\.?U\.?|DD))\b/
+/** Desconto que o documento dá no total, fora das linhas dos itens (GOTARDO: "SUBTOTAL 317,74 DESC: 38,13
+ * TOTAL 279,61") — os valores lidos dos itens estão sem ele. */
+function avisosDoDocumento(linhas: LinhaTexto[], itens: ItemDetectadoFornecedor[], descontoJaNosItens: boolean): string[] {
+  if (descontoJaNosItens || itens.some((i) => /DESCONTO/i.test(i.observacao ?? ''))) return []
+  for (const l of linhas) {
+    const m = normalizarTexto(l.texto).match(/\bDESC(?:ONTOS?)?\b\.?(?:\s+GERA(?:L|IS))?\s*:?\s*(?:R\$\s*)?(\d[\d.]*,\d{2})(?!\d)/)
+    const valor = m ? valoresMonetariosNoTexto(m[1])[0] : undefined
+    if (valor) return [`O documento informa um desconto de R$ ${formatarNumeroBR(valor, 2)} no total — os valores dos itens abaixo estão sem ele. Confira antes de adicionar.`]
+  }
+  return []
+}
+
+/** Unitário e total entre os números de uma linha de planilha (células de número) — a mesma conta dos
+ * PDFs e fotos: vale o par em que unitário × quantidade = total (ver importacao/valoresDaLinha.ts). */
+export function escolherUnitarioETotal(valores: number[], quantidade: number, quantidadesNaLinha: number[] = []) {
+  return resolverValores(
+    valores.map((valor) => ({ valor, casas: 2 })),
+    quantidade,
+    quantidadesNaLinha,
+  )
+}
+
+// "IMEDIATO", "Imediata", "25 DIAS ÚTEIS", "02 A 05 DIAS ÚTEIS" (o texto já vem sem acento)
+const PRAZO_NO_TEXTO = /\b(IMEDIAT[OA]|PRONTA ENTREGA|(?:\d{1,3}\s*A\s*)?\d{1,3}\s*(?:DIAS?(?:\s+UTEIS)?|D\.?U\.?|DD))\b/
+// o fornecedor escreveu na linha que não tem o item ("INDISPONIVEL" da ENGEPEÇAS, "Negativa" da PAVONI)
+const SEM_ESTOQUE_NO_TEXTO = /\b(INDISPONIVEL|NEGATIV[AO]|SEM\s+ESTOQUE|S\/\s*ESTOQUE|EM\s+FALTA|ESGOTADO|NAO\s+DISPONIVEL|FORA\s+DE\s+LINHA)\b/
+const SALDO_INSUFICIENTE = /\bSALDO\s+INSUFICIENTE\b/
+// o que vem com vírgula e não é preço: peso ("PESO 2,15", "0,613 Kg") e medida ("4,50MM")
+const NAO_E_PRECO = /\bPESO\s*:?\s*[\d.,]+|(?<![\d.,])[\d.]*\d,\d+\s*(?:KGS?|MM|CM)\b/gi
 
 // quantidade que o fornecedor escreveu que atende ("DISPONÍVEL: 2", "ATENDE 3", "ESTOQUE 1")
 const QUANTIDADE_ESCRITA = /\b(?:DISP(?:ONIVE(?:L|IS))?|ATENDE(?:MOS)?|ATENDIDA|SALDO|ESTOQUE)\.?\s*:?\s*(\d{1,5})(?:,00)?\b/
-
-/** Números inteiros soltos no texto ("2", "2,00", "3 UN") — candidatos a quantidade. */
-function quantidadesNoTexto(texto: string): number[] {
-  return (texto.match(/(?<![\d.,])\d{1,5}(?:,00)?(?![\d.,])/g) ?? []).map((m) => Number(m.replace(',00', ''))).filter((n) => n > 0)
-}
 
 /** Unitário × quantidade dá o total? (com uma folga de arredondamento) */
 function fechaConta(unitario: number | undefined, quantidade: number | undefined, total: number | undefined): boolean {
@@ -167,14 +186,45 @@ function fechaConta(unitario: number | undefined, quantidade: number | undefined
 
 /** Onde a referência aparece numa linha com o código escrito do jeito do fornecedor (marca colada,
  * sufixo, alternativos) — só pra quando ela não aparece igual. */
-function acharVariacaoNaLinha(palavras: string[], referencia: string): { posicao: [number, number]; casamento: CasamentoCodigo; codigo: string } | undefined {
+function acharVariacaoNaLinha(
+  palavras: string[],
+  referencia: string,
+  ocr = false,
+): { posicao: [number, number]; casamento: CasamentoCodigo; codigo: string } | undefined {
   for (let i = 0; i < palavras.length; i++) {
     // a palavra sozinha e com a seguinte ("JD9268 FAG")
     for (let j = i; j < Math.min(palavras.length, i + 2); j++) {
-      const codigo = palavras.slice(i, j + 1).join(' ').replace(/^[(]+|[)]+$/g, '')
-      const casamento = compararCodigo(referencia, codigo)
+      // sem o que gruda nas pontas: "(15140007)", "0503030551**", "H161529,"
+      const codigo = palavras
+        .slice(i, j + 1)
+        .join(' ')
+        .replace(/^[(*]+|[)*,;.]+$/g, '')
+      const casamento = compararCodigo(referencia, codigo, ocr) ?? (i === j ? codigoComPrefixo(referencia, codigo) : undefined)
       if (casamento && casamento.tipo !== 'exato') return { posicao: [i, j + 1], casamento, codigo }
     }
+  }
+  return undefined
+}
+
+/** "NCM: 097 - 40103900" no cabeçalho (NS): a linha do item traz só o código (097) do NCM. */
+function tabelaDeNcm(linhas: LinhaTexto[]): Map<string, string> {
+  const tabela = new Map<string, string>()
+  for (const l of linhas) {
+    for (const m of l.texto.matchAll(/\bNCM\s*:?\s*(\d{2,3})\s*-\s*(\d{8})\b/gi)) {
+      const ncm = normalizarNcm(m[2])
+      if (ncm) tabela.set(m[1], ncm)
+    }
+  }
+  return tabela
+}
+
+/** O NCM escrito com rótulo nas linhas logo abaixo do item ("Classif. Fiscal: 73181500" da BALDAN) — até a
+ * próxima linha com cara de item (dois preços ou mais). */
+function ncmNasLinhasDeBaixo(linhas: LinhaTexto[], i: number): string | undefined {
+  for (let k = i + 1; k < Math.min(linhas.length, i + 5); k++) {
+    const m = linhas[k].texto.match(/(?:\bNCM|CLASSIF\S*\s*FISCAL)\s*[:.-]?\s*(\d{4}\.?\d{2}\.?\d{2})\b/i)
+    if (m) return normalizarNcm(m[1])
+    if (valoresMonetariosNoTexto(linhas[k].texto).length >= 2) return undefined
   }
   return undefined
 }
@@ -189,36 +239,58 @@ function interpretarLinhas(
   ocr: boolean,
   aceitaNcmSemPontos: boolean,
   aceitaVariacao: boolean,
+  /** O texto veio de imagem (mesmo na passada sem tolerância de código): recupera números que o OCR estragou. */
+  linhaDeOcr = ocr,
 ): ItemDetectadoFornecedor[] {
-  const palavrasPorLinha = linhas.map((l) => l.texto.split(/\s+/).filter(Boolean))
+  // "|" de tabela em texto (CRUZ ATACADISTA) vira espaço: senão o código e o preço grudam nas barras
+  const palavrasPorLinha = linhas.map((l) => l.texto.replace(/\|/g, ' ').split(/\s+/).filter(Boolean))
+  const ncmPorCodigo = tabelaDeNcm(linhas)
   const encontrados: ItemDetectadoFornecedor[] = []
   for (const item of items) {
     const referencia = item.product.referencia.trim()
     if (!referencia) continue
     let achado: ItemDetectadoFornecedor | undefined
     for (let i = 0; i < linhas.length && !achado; i++) {
-      const exata = acharReferenciaNaLinha(palavrasPorLinha[i], referencia, ocr)
-      const variacao = !exata && aceitaVariacao ? acharVariacaoNaLinha(palavrasPorLinha[i], referencia) : undefined
+      const palavras = palavrasPorLinha[i]
+      const exata = acharReferenciaNaLinha(palavras, referencia, ocr)
+      const variacao = !exata && aceitaVariacao ? acharVariacaoNaLinha(palavras, referencia, ocr) : undefined
       const posicao = exata ?? variacao?.posicao
       if (!posicao) continue
-      // o que vem depois da referência na mesma linha (e, se não tiver preço, a linha de baixo)
-      const resto = palavrasPorLinha[i].slice(posicao[1]).join(' ')
+      const pedido = item.product.qtd || 0
+      const ler = (texto: string) => numerosDaLinha(texto.replace(NAO_E_PRECO, ' '), linhaDeOcr)
+      // os números da linha da referência: primeiro só os de depois dela; se a conta não fechar, a linha
+      // inteira (a quantidade e o preço às vezes vêm antes do código: COMMERSUL, AGRIPARTS)
+      const resto = palavras.slice(posicao[1]).join(' ')
+      const antes = palavras.slice(0, posicao[0]).join(' ')
       let textoDosValores = resto
-      let valores = valoresMonetariosNoTexto(resto)
-      if (valores.length === 0 && i + 1 < linhas.length) {
-        textoDosValores = linhas[i + 1].texto
-        valores = valoresMonetariosNoTexto(textoDosValores)
+      let lidos = resolverValores(ler(resto), pedido, quantidadesDaLinha(resto))
+      if (!lidos.conferido && antes) {
+        const daLinha = resolverValores([...ler(antes), ...ler(resto)], pedido, quantidadesDaLinha(`${antes} ${resto}`))
+        if (daLinha.conferido) lidos = daLinha
       }
-      const { unitario, total, conferido, quantidade } = escolherUnitarioETotal(
-        valores,
-        item.product.qtd || 0,
-        quantidadesNoTexto(textoDosValores),
-      )
-      const escrita = normalizarTexto(`${resto} ${textoDosValores}`).match(QUANTIDADE_ESCRITA)?.[1]
-      const quantidadeDetectada = escrita !== undefined ? Number(escrita) : quantidade
-      const prazo = normalizarTexto(resto).match(PRAZO_NO_TEXTO)?.[1]
-      // NCM na mesma linha (antes ou depois da referência, menos as palavras da própria referência)
-      const ncm = acharNcmNasPalavras(palavrasPorLinha[i], { ignorar: posicao, aceitaSemPontos: aceitaNcmSemPontos, ocr })
+      // sem preço nenhum na linha: a de baixo (ENGEPEÇAS escreve o código numa linha e os valores na outra)
+      if (lidos.unitario === undefined && i + 1 < linhas.length) {
+        textoDosValores = linhas[i + 1].texto
+        lidos = resolverValores(ler(textoDosValores), pedido, quantidadesDaLinha(textoDosValores))
+        // a linha de baixo pode ser de outro item: sem a conta fechar, fica pra conferir
+        if (lidos.unitario !== undefined && !lidos.conferido && !lidos.conferir) {
+          lidos = { ...lidos, conferir: 'o valor veio da linha de baixo do código, sem total pra conferir — confira' }
+        }
+      }
+      const { unitario, total, conferido, quantidade } = lidos
+      const normal = normalizarTexto(`${resto} ${textoDosValores === resto ? '' : textoDosValores}`)
+      // "INDISPONIVEL", "Negativa": o fornecedor não tem — e o preço zerado da linha não é preço
+      const semEstoque = SEM_ESTOQUE_NO_TEXTO.test(normal)
+      const escrita = normal.match(QUANTIDADE_ESCRITA)?.[1]
+      const quantidadeDetectada = semEstoque ? 0 : escrita !== undefined ? Number(escrita) : quantidade
+      const prazo = semEstoque ? 'SEM ESTOQUE' : normal.match(PRAZO_NO_TEXTO)?.[1]
+      const observacoes = [lidos.observacao, SALDO_INSUFICIENTE.test(normal) ? 'SALDO INSUFICIENTE' : undefined].filter(Boolean)
+      // NCM na mesma linha (antes ou depois da referência, menos as palavras da própria referência); senão,
+      // o código da tabela de NCM do cabeçalho; senão, o que vier com rótulo nas linhas de baixo
+      const ncm =
+        acharNcmNasPalavras(palavras, { ignorar: posicao, aceitaSemPontos: aceitaNcmSemPontos, ocr }) ??
+        palavras.map((p) => ncmPorCodigo.get(p)).find(Boolean) ??
+        ncmNasLinhasDeBaixo(linhas, i)
       achado = {
         chave: item.id,
         itemId: item.id,
@@ -227,6 +299,7 @@ function interpretarLinhas(
         valorUnitarioDetectado: unitario,
         valorTotalDetectado: total,
         conferido,
+        ...(lidos.conferir && !semEstoque ? { conferir: lidos.conferir } : {}),
         casamento: variacao ? variacao.casamento.tipo : 'exato',
         ...(variacao
           ? {
@@ -238,6 +311,8 @@ function interpretarLinhas(
         ...(prazo ? { prazoDetectado: prazo } : {}),
         ...(ncm ? { ncmDetectado: ncm } : {}),
         ...(quantidadeDetectada !== undefined ? { quantidadeDetectada } : {}),
+        ...(semEstoque ? { semEstoque: true } : {}),
+        ...(observacoes.length > 0 ? { observacao: observacoes.join(' · ').toUpperCase() } : {}),
       }
     }
     if (achado) encontrados.push(achado)
@@ -247,11 +322,12 @@ function interpretarLinhas(
 
 function interpretarPaginas(linhas: LinhaTexto[], items: QuoteItem[], ocr: boolean): ItemDetectadoFornecedor[] {
   const mencionaNcm = documentoMencionaNcm(linhas.map((l) => l.texto).join('\n'))
-  const exatos = interpretarLinhas(linhas, items, false, mencionaNcm, true)
+  const exatos = interpretarLinhas(linhas, items, false, mencionaNcm, true, ocr)
   if (!ocr) return exatos
-  // OCR: tenta de novo, tolerando trocas típicas (O/0, I/1, S/5…), só pros itens que faltaram
+  // OCR: tenta de novo, tolerando trocas típicas (O/0, I/1, S/5…), só pros itens que faltaram — também
+  // com o código do jeito do fornecedor ("BO766509KN" na foto é o nosso B0766509)
   const faltando = items.filter((item) => !exatos.some((e) => e.itemId === item.id))
-  return [...exatos, ...interpretarLinhas(linhas, faltando, true, mencionaNcm, false)]
+  return [...exatos, ...interpretarLinhas(linhas, faltando, true, mencionaNcm, true, true)]
 }
 
 /** O item da cotação de uma linha do retorno: o primeiro código dela que casar (na ordem em que o
@@ -292,7 +368,8 @@ export function casarLinhasDoRetorno(
     const candidatos = items.flatMap((item) => {
       if (itensComOferta.has(item.id) || !item.product.referencia.trim()) return []
       const codigo = c.linha.codigos[0] ?? ''
-      const casamento = codigo ? codigoProximo(item.product.referencia, codigo) : undefined
+      // na foto, antes de contar a diferença, as trocas do OCR (O/0, S/5…) já são a mesma letra
+      const casamento = codigo ? codigoProximo(item.product.referencia, codigo, ocr) : undefined
       return casamento ? [{ item, casamento, codigo }] : []
     })
     // dois itens a um caractere de distância: não dá pra saber qual — fica de fora
@@ -306,12 +383,37 @@ export function casarLinhasDoRetorno(
       naoEncontrados.push({ codigo: linha.codigos.join(' / '), descricao: linha.descricao, valorUnitario: linha.valorUnitario })
       return
     }
-    const { item, casamento, codigo } = achado
-    const unitario = linha.valorUnitario ?? (linha.valorTotal && linha.quantidade ? linha.valorTotal / linha.quantidade : undefined)
-    const total = linha.valorTotal ?? (unitario !== undefined && linha.quantidade ? unitario * linha.quantidade : undefined)
-    const quantidade = linha.semEstoque ? 0 : linha.quantidade
+    const { item, codigo } = achado
+    // o nosso código só entre os alternativos da linha (ROMAR: item 578189 com "… H161529, …" embaixo)
+    const casamento: CasamentoCodigo =
+      achado.casamento.tipo === 'exato' && linha.codigos.length > 1 && codigo !== linha.codigos[0] && !compararCodigo(item.product.referencia, linha.codigos[0])
+        ? { tipo: 'alternativo', detalhe: `um dos códigos do item ${linha.codigos[0]}` }
+        : achado.casamento
+    const pedido = item.product.qtd || 0
+    let unitario = linha.valorUnitario ?? (linha.valorTotal && linha.quantidade ? linha.valorTotal / linha.quantidade : undefined)
+    let total = linha.valorTotal ?? (unitario !== undefined && linha.quantidade ? unitario * linha.quantidade : undefined)
+    let quantidadeLida = linha.quantidade
+    let conferido = fechaConta(unitario, pedido, total) || fechaConta(unitario, linha.quantidade, total)
+    // foto que perdeu uma coluna: os números da linha, com a quantidade do item, dizem quem é quem
+    if (!conferido && !linha.semEstoque && linha.numeros) {
+      const r = resolverValores(linha.numeros, pedido, linha.quantidade ? [linha.quantidade] : [])
+      if (r.conferido) {
+        unitario = r.unitario
+        total = r.total
+        quantidadeLida = r.quantidade ?? pedido
+        conferido = true
+      }
+    }
+    const quantidade = linha.semEstoque ? 0 : quantidadeLida
     const marca = linha.marca || casamento.marca
     const prazo = linha.semEstoque ? 'SEM ESTOQUE' : linha.prazo
+    // o padrão do fornecedor diz qual coluna é qual, mas a foto pode ter comido um número: se o unitário ×
+    // a quantidade do documento não dá o total dele, a linha fica pra conferir
+    const naoFecha =
+      !linha.semEstoque && !conferido && unitario !== undefined && unitario > 0 && linha.valorTotal !== undefined && linha.valorTotal > 0 && linha.quantidade
+        ? `${formatarNumeroCurtoBR(linha.quantidade, 3)} × R$ ${formatarNumeroBR(unitario, 2)} não dá o total lido (R$ ${formatarNumeroBR(linha.valorTotal, 2)}) — confira os valores`
+        : undefined
+    const conferir = linha.semEstoque ? undefined : (linha.conferir ?? naoFecha)
     itens.push({
       chave: `${item.id}#${i}`,
       itemId: item.id,
@@ -319,7 +421,8 @@ export function casarLinhasDoRetorno(
       descricao: item.product.descricao || linha.descricao,
       valorUnitarioDetectado: unitario !== undefined && unitario > 0 ? unitario : undefined,
       valorTotalDetectado: total !== undefined && total > 0 ? total : undefined,
-      conferido: fechaConta(unitario, item.product.qtd || 0, total) || fechaConta(unitario, linha.quantidade, total),
+      conferido,
+      ...(conferir ? { conferir } : {}),
       casamento: casamento.tipo,
       ...(casamento.tipo !== 'exato' ? { codigoNoArquivo: codigo, detalheCasamento: casamento.detalhe } : {}),
       ...(marca ? { marcaDetectada: marca.toUpperCase() } : {}),
@@ -474,7 +577,7 @@ async function importarDePlanilha(
 
   const perfil = identificarPerfil(textoCompleto, file.name)
   return {
-    fornecedorDetectado: detectarFornecedorConhecido(textoCompleto, fornecedores) ?? perfil?.nome,
+    fornecedorDetectado: fornecedorDoArquivo(textoCompleto, file.name, fornecedores),
     ...(perfil ? { padrao: { fornecedor: perfil.nome, descricao: perfil.padrao } } : {}),
     itens: ordenarComoNaCotacao(encontrados, items),
     naoEncontrados,
@@ -498,16 +601,16 @@ function lerPaginas(
   items: QuoteItem[],
   perfil: PerfilFornecedor | undefined,
   texto: string,
-): { itens: ItemDetectadoFornecedor[]; naoEncontrados: LinhaNaoEncontrada[]; leuNoPadrao: boolean } {
+): { itens: ItemDetectadoFornecedor[]; naoEncontrados: LinhaNaoEncontrada[]; leuNoPadrao: boolean; linhas: LinhaTexto[] } {
   const ocr = paginas.some((p) => p.ocr)
   const linhas = paginas.flatMap((p) => agruparEmLinhas(p.trechos))
-  const doPadrao = perfil?.lerLinhas?.(linhas, texto) ?? []
-  if (doPadrao.length === 0) return { itens: interpretarPaginas(linhas, items, ocr), naoEncontrados: [], leuNoPadrao: false }
+  const doPadrao = perfil?.lerLinhas?.(linhas, texto, ocr) ?? []
+  if (doPadrao.length === 0) return { itens: interpretarPaginas(linhas, items, ocr), naoEncontrados: [], leuNoPadrao: false, linhas }
   const casado = casarLinhasDoRetorno(doPadrao, items, ocr)
-  if (!ocr) return { ...casado, leuNoPadrao: true }
+  if (!ocr) return { ...casado, leuNoPadrao: true, linhas }
   const faltando = items.filter((item) => !casado.itens.some((e) => e.itemId === item.id))
   const genericos = interpretarPaginas(linhas, faltando, ocr)
-  return { itens: [...casado.itens, ...genericos], naoEncontrados: casado.naoEncontrados, leuNoPadrao: true }
+  return { itens: [...casado.itens, ...genericos], naoEncontrados: casado.naoEncontrados, leuNoPadrao: true, linhas }
 }
 
 /** Lê um arquivo de cotação de fornecedor (planilha, PDF ou imagem) e casa o que encontrar com os
@@ -544,12 +647,14 @@ export async function importarCotacaoFornecedor(
   }
 
   const perfil = identificarPerfil(texto, file.name)
-  const { itens, naoEncontrados, leuNoPadrao } = lerPaginas(paginas, items, perfil, texto)
+  const { itens, naoEncontrados, leuNoPadrao, linhas } = lerPaginas(paginas, items, perfil, texto)
+  const avisos = avisosDoDocumento(linhas, itens, !!perfil?.descontoJaNosItens && leuNoPadrao)
   const resultado: ResultadoImportacaoFornecedor = {
-    fornecedorDetectado: detectarFornecedorConhecido(texto, fornecedores) ?? perfil?.nome,
+    fornecedorDetectado: fornecedorDoArquivo(texto, file.name, fornecedores),
     ...(perfil && leuNoPadrao ? { padrao: { fornecedor: perfil.nome, descricao: perfil.padrao } } : {}),
     itens: ordenarComoNaCotacao(itens, items),
     naoEncontrados,
+    ...(avisos.length > 0 ? { avisos } : {}),
   }
   if (resultado.itens.length === 0) {
     resultado.avisoLeituraFraca = 'Li o arquivo, mas não encontrei nenhuma referência dessa cotação nele.'
