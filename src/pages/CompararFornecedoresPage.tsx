@@ -434,6 +434,8 @@ export function CompararFornecedoresPage({
   codigoCotacao,
   cliente,
   onPatchItem,
+  onAdicionarItem,
+  onRemoverItem,
   onGoToCotacoes,
   onGoToPrecificacao,
 }: {
@@ -446,6 +448,10 @@ export function CompararFornecedoresPage({
   codigoCotacao?: string
   cliente?: string
   onPatchItem: (id: string, patch: Partial<ProductInput>) => void
+  /** Item novo digitado na planilha (Custo Base Macro). */
+  onAdicionarItem: (campos: Partial<ProductInput>) => void
+  /** Tira o item da cotação (já confirmado aqui) — ele fica guardado nos itens excluídos, como na Precificação. */
+  onRemoverItem: (id: string) => void
   onGoToCotacoes: () => void
   onGoToPrecificacao: () => void
 }) {
@@ -561,6 +567,21 @@ export function CompararFornecedoresPage({
     else handleAddCotacao(item, { fornecedor, marca: '', valorUnitario: valor })
   }
 
+  async function handleRemoverItem(item: QuoteItem) {
+    const p = item.product
+    const quem = [p.referencia, p.descricao].filter((x) => x?.trim()).join(' — ')
+    const cotacoes = (p.cotacoesFornecedores ?? []).length
+    if (
+      !(await confirmar(
+        `Tirar este item da cotação?${quem ? `\n\n${quem}` : ''}${cotacoes > 0 ? `\n\nEle tem ${cotacoes} cotaç${cotacoes === 1 ? 'ão' : 'ões'} de fornecedor, que saem junto.` : ''}\n\nO item fica guardado nos excluídos e dá pra trazer de volta.`,
+        { confirmText: 'Tirar', tone: 'danger' },
+      ))
+    ) {
+      return
+    }
+    onRemoverItem(item.id)
+  }
+
   async function handleRemoveCotacao(item: QuoteItem, cotacaoId: string) {
     const cotacao = (item.product.cotacoesFornecedores ?? []).find((c) => c.id === cotacaoId)
     const quem = cotacao ? [cotacao.fornecedor, cotacao.marca].filter((x) => x?.trim()).join(' · ') : ''
@@ -645,8 +666,10 @@ export function CompararFornecedoresPage({
               <p className="text-sm text-ink-400">
                 No formato do Custo Base Macro: uma linha por item e, pra cada fornecedor, o preço e a marca. Digite o preço
                 na coluna do fornecedor (apagar tira a cotação); o mais barato (VLR MÍN, em verde) já preenche o item, e o
-                círculo da célula escolhe outro, mesmo mais caro. Cada coluna tem filtro e ordem no ▾, e muda de lugar
-                arrastando o título. Prazo, NCM e quantidade que atende ficam no Detalhado.
+                círculo da célula escolhe outro, mesmo mais caro. Referência, interno, descrição e UND também se digitam
+                na célula; a linha em branco do fim acrescenta um item, e o × (no número da linha) tira. Cada coluna tem
+                filtro e ordem no ▾, e muda de lugar arrastando o título. Prazo, NCM e quantidade que atende ficam no
+                Detalhado.
               </p>
             ) : (
               <p className="text-sm text-ink-400">
@@ -754,6 +777,9 @@ export function CompararFornecedoresPage({
             onDefinirPreco={(item, fornecedor, cotacao, valor) => void handleDefinirPreco(item, fornecedor, cotacao, valor)}
             onDefinirMarca={(item, cotacao, marca) => handleEditarCotacao(item, cotacao.id, { marca })}
             onEscolher={handleEscolherCotacao}
+            onEditarItem={(item, patch) => onPatchItem(item.id, patch)}
+            onAdicionarItem={onAdicionarItem}
+            onRemoverItem={(item) => void handleRemoverItem(item)}
           />
         ) : (
           <div className="overflow-x-auto rounded-xl border border-ink-100">

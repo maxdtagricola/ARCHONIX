@@ -691,6 +691,15 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
     setActiveItemId(item.id)
   }
 
+  /** Item novo digitado na planilha do Comparar (referência, interno, descrição, UND) — o resto (preço,
+   * fornecedor) vem das cotações que forem lançadas nele. */
+  function handleAdicionarItemComCampos(campos: Partial<ProductInput>) {
+    const item = criarItemComGlobais()
+    const novo = { ...item, product: { ...item.product, ...campos } }
+    setItems((prev) => [...prev, novo])
+    setActiveItemId(novo.id)
+  }
+
   // a confirmação já foi feita por quem chamou (Itens da cotação, listando o que vai sair) — aqui
   // não passa pelo "essa cotação já foi salva, quer mesmo alterar?" pra não perguntar duas vezes
   function handleRemoveItems(ids: string[]) {
@@ -1022,6 +1031,8 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
           codigoCotacao={codigoCotacao}
           cliente={cliente}
           onPatchItem={protegido(patchItemProduct)}
+          onAdicionarItem={protegido(handleAdicionarItemComCampos)}
+          onRemoverItem={(id) => handleRemoveItems([id])}
           onGoToCotacoes={() => changeTab('cotacoes')}
           onGoToPrecificacao={() => changeTab('dashboard')}
         />

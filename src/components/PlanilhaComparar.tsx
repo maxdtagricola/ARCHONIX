@@ -35,6 +35,76 @@ import { cotacaoAtende, formatCurrency, mesmoFornecedor, quantidadeAtendida } fr
 // (ou muda) a cotação daquele fornecedor; apagar tira. O círculo da célula escolhe o fornecedor que
 // preenche o item, mesmo mais caro. Clicar numa linha marca ela de amarelo, como a macro da planilha.
 
+/** O que dá pra digitar do item direto na planilha (o resto vem das cotações dos fornecedores). */
+export interface CamposDoItem {
+  referencia?: string
+  interno?: string
+  descricao?: string
+  qtd?: number
+}
+
+const CAMPO_DA_COLUNA: Record<string, keyof CamposDoItem> = { referencia: 'referencia', interno: 'interno', descricao: 'descricao', und: 'qtd' }
+
+/** "5", "2,5" → número; vazio ou inválido → undefined. */
+function quantidadeDigitada(texto: string): number | undefined {
+  const n = parseNumeroFlexivel(texto)
+  return n !== undefined && n > 0 ? n : undefined
+}
+
+/** Nome curto do item, pros rótulos. */
+const nomeDoItem = (l: LinhaPlanilha) => l.item.product.referencia || l.item.product.interno || l.item.product.descricao || `item ${l.numero}`
+
+/** A linha em branco do fim da planilha: digitar a referência (e o resto) e Enter acrescenta o item. */
+function LinhaNovoItem({ colunas, travada, onAdicionar }: { colunas: ColunaPlanilha[]; travada: boolean; onAdicionar: (campos: CamposDoItem) => void }) {
+  const [campos, setCampos] = useState<Record<string, string>>({})
+  function adicionar() {
+    const referencia = (campos.referencia ?? '').trim()
+    const descricao = (campos.descricao ?? '').trim()
+    if (!referencia && !descricao) return void avisar('Digite pelo menos a referência ou a descrição do item novo.')
+    if ((campos.und ?? '').trim() && quantidadeDigitada(campos.und) === undefined) return void avisar('A UND (quantidade) precisa ser um número maior que zero.')
+    onAdicionar({ referencia, interno: (campos.interno ?? '').trim(), descricao, qtd: quantidadeDigitada(campos.und ?? '') ?? 1 })
+    setCampos({})
+  }
+  if (travada) return null
+  return (
+    <tr>
+      <td className="planilha-celula sticky left-0 z-10 border-b border-r border-ink-200 px-0.5 text-center">
+        <button
+          type="button"
+          onClick={adicionar}
+          aria-label="Adicionar item"
+          title="Adicionar o item digitado nesta linha"
+          className="h-6 w-6 rounded-md text-base font-semibold leading-none text-ink-500 hover:bg-ink-100 hover:text-ink-900"
+        >
+          +
+        </button>
+      </td>
+      {colunas.map((c, i) => {
+        const campo = CAMPO_DA_COLUNA[c.chave]
+        return (
+          <td key={c.chave} className={`planilha-celula border-b border-r border-ink-200 px-1 py-0.5 ${i === 0 ? 'sticky left-8 z-10' : ''}`}>
+            {campo && (
+              <input
+                type="text"
+                size={1}
+                inputMode={campo === 'qtd' ? 'decimal' : undefined}
+                aria-label={`${c.titulo} do item novo`}
+                placeholder={campo === 'referencia' ? 'Item novo…' : campo === 'qtd' ? '1' : ''}
+                className={`w-full rounded border border-dashed border-ink-300 bg-transparent px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand-400 ${campo === 'qtd' ? 'text-right' : ''}`}
+                value={campos[c.chave] ?? ''}
+                onChange={(e) => setCampos((atual) => ({ ...atual, [c.chave]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') adicionar()
+                }}
+              />
+            )}
+          </td>
+        )
+      })}
+    </tr>
+  )
+}
+
 const nomeDaColuna = (c: ColunaPlanilha) => (c.grupo === 'marca' ? `MARCA ${c.fornecedor?.toUpperCase()}` : c.titulo)
 
 /** Célula de preço de um fornecedor: mostra em reais; editando, o número. Enter grava e desce. */
@@ -105,7 +175,19 @@ function CelulaPreco({
 }
 
 /** Célula de texto (a marca do fornecedor): grava ao sair ou no Enter. */
-function CelulaTexto({ valor, rotulo, travada, onGravar }: { valor: string; rotulo: string; travada: boolean; onGravar: (v: string) => void }) {
+function CelulaTexto({
+  valor,
+  rotulo,
+  travada,
+  alinharDireita = false,
+  onGravar,
+}: {
+  valor: string
+  rotulo: string
+  travada: boolean
+  alinharDireita?: boolean
+  onGravar: (v: string) => void
+}) {
   const [texto, setTexto] = useState<string | null>(null)
   return (
     <input
@@ -113,7 +195,8 @@ function CelulaTexto({ valor, rotulo, travada, onGravar }: { valor: string; rotu
       size={1}
       aria-label={rotulo}
       disabled={travada}
-      className="w-full bg-transparent px-0.5 py-1 focus:bg-surface focus:outline-none focus:ring-1 focus:ring-brand-400 disabled:cursor-default"
+      title={valor}
+      className={`w-full bg-transparent px-0.5 py-1 focus:bg-surface focus:outline-none focus:ring-1 focus:ring-brand-400 disabled:cursor-default ${alinharDireita ? 'text-right tabular-nums' : ''}`}
       value={texto ?? valor}
       onFocus={() => setTexto(valor)}
       onChange={(e) => setTexto(e.target.value)}
@@ -313,6 +396,9 @@ export function PlanilhaComparar({
   onDefinirPreco,
   onDefinirMarca,
   onEscolher,
+  onEditarItem,
+  onAdicionarItem,
+  onRemoverItem,
 }: {
   items: QuoteItem[]
   travada: boolean
@@ -323,6 +409,11 @@ export function PlanilhaComparar({
   onDefinirPreco: (item: QuoteItem, fornecedor: string, cotacao: CotacaoFornecedorItem | undefined, valor: number | undefined) => void
   onDefinirMarca: (item: QuoteItem, cotacao: CotacaoFornecedorItem, marca: string) => void
   onEscolher: (item: QuoteItem, cotacao: CotacaoFornecedorItem) => void
+  /** Referência, interno, descrição ou UND mudados na célula. */
+  onEditarItem: (item: QuoteItem, patch: CamposDoItem) => void
+  /** Linha nova digitada no fim da planilha. */
+  onAdicionarItem: (campos: CamposDoItem) => void
+  onRemoverItem: (item: QuoteItem) => void
 }) {
   const [arranjo, setArranjo] = useState<ArranjoDasColunas>(lerArranjo)
   const [filtros, setFiltros] = useState<FiltrosDaPlanilha>({})
@@ -484,6 +575,25 @@ export function PlanilhaComparar({
     }
     const valor = valorDaCelula(l, c)
     const texto = valor === undefined ? '' : textoDoValor(valor, c.tipo)
+    // referência, interno, descrição e UND: digitáveis direto na célula, como no Excel
+    const campo = CAMPO_DA_COLUNA[c.chave]
+    if (campo && !travada) {
+      const atual = campo === 'qtd' ? formatarNumeroCurtoBR(l.und, 3) : String(p[campo] ?? '')
+      return (
+        <CelulaTexto
+          valor={atual}
+          rotulo={`${c.titulo} — item ${l.numero}`}
+          travada={travada}
+          alinharDireita={campo === 'qtd'}
+          onGravar={(novo) => {
+            if (campo !== 'qtd') return onEditarItem(l.item, { [campo]: novo })
+            const qtd = quantidadeDigitada(novo)
+            if (qtd === undefined) return void avisar('A UND (quantidade) precisa ser um número maior que zero.')
+            onEditarItem(l.item, { qtd })
+          }}
+        />
+      )
+    }
     if (c.chave === 'vlrUnit') {
       const outro = l.emUso && l.melhor && l.emUso !== l.melhor
       return (
@@ -576,6 +686,13 @@ export function PlanilhaComparar({
         <table className="border-separate border-spacing-0 text-xs">
           <thead>
             <tr>
+              <th
+                style={{ '--cor-celula': COR_CABECALHO, minWidth: '2rem', width: '2rem' } as CSSProperties}
+                className="planilha-cabecalho sticky left-0 top-0 z-30 border-b border-r border-ink-300 px-1 py-1 text-center align-bottom font-bold"
+                title="Número do item, na ordem da cotação — passe o mouse na linha pra tirar o item"
+              >
+                #
+              </th>
               {visiveis.map((c, i) => {
                 const filtrada = !!filtros[c.chave]
                 const marca = c.grupo === 'marca'
@@ -610,7 +727,7 @@ export function PlanilhaComparar({
                     title="Arraste pra mudar a coluna de lugar"
                     style={{ '--cor-celula': c.grupo === 'resultado' ? COR_CABECALHO_RESULTADO : COR_CABECALHO, minWidth: `${c.largura}rem`, width: `${c.largura}rem` } as CSSProperties}
                     className={`planilha-cabecalho sticky top-0 z-20 cursor-grab select-none border-b border-r border-ink-300 px-1.5 py-1 text-left align-bottom font-bold ${
-                      i === 0 ? 'left-0 z-30' : ''
+                      i === 0 ? 'left-8 z-30' : ''
                     } ${arrastando === c.chave ? 'opacity-50' : ''} ${alvo ? (soltarEm!.depois ? 'planilha-soltar-depois' : 'planilha-soltar-antes') : ''}`}
                   >
                     <span className="flex items-end gap-1">
@@ -638,7 +755,7 @@ export function PlanilhaComparar({
           <tbody>
             {mostradas.length === 0 && (
               <tr>
-                <td colSpan={visiveis.length} className="px-3 py-6 text-center text-ink-400">
+                <td colSpan={visiveis.length + 1} className="px-3 py-6 text-center text-ink-400">
                   Nenhum item com esses filtros.
                 </td>
               </tr>
@@ -652,8 +769,23 @@ export function PlanilhaComparar({
                   aria-selected={sel}
                   onPointerDown={() => setSelecionada(l.item.id)}
                   onFocusCapture={() => setSelecionada(l.item.id)}
-                  className={sel ? 'planilha-linha-selecionada' : indice % 2 === 1 ? 'planilha-listra' : ''}
+                  className={`group/num ${sel ? 'planilha-linha-selecionada' : indice % 2 === 1 ? 'planilha-listra' : ''}`}
                 >
+                  {/* o número do item, como a numeração de linhas do Excel; com o mouse na linha, o × tira o item */}
+                  <td className="planilha-celula sticky left-0 z-10 border-b border-r border-ink-200 px-0.5 text-center align-middle text-[10px] text-ink-500">
+                    <span className={travada ? '' : 'group-hover/num:hidden group-focus-within/num:hidden'}>{l.numero}</span>
+                    {!travada && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoverItem(l.item)}
+                        aria-label={`Tirar o item ${l.numero} (${nomeDoItem(l)}) da cotação`}
+                        title="Tirar este item da cotação"
+                        className="hidden h-5 w-5 rounded text-sm leading-none text-rose-600 hover:bg-rose-50 focus:inline-block group-hover/num:inline-block group-focus-within/num:inline-block"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </td>
                   {visiveis.map((c, i) => {
                     const cor = c.grupo === 'preco' ? corDe(c) : ''
                     const repetida = c.chave === 'referencia' && l.referenciaRepetida
@@ -663,7 +795,7 @@ export function PlanilhaComparar({
                         style={cor ? ({ '--cor-celula': cor } as CSSProperties) : undefined}
                         className={`border-b border-r border-ink-200 px-1 py-0.5 align-middle text-ink-900 ${cor ? 'planilha-cor' : 'planilha-celula'} ${
                           repetida ? 'planilha-repetida' : ''
-                        } ${i === 0 ? 'sticky left-0 z-10' : ''}`}
+                        } ${i === 0 ? 'sticky left-8 z-10' : ''}`}
                         title={repetida ? 'Referência repetida em outro item' : undefined}
                       >
                         {celula(l, c, indice)}
@@ -673,11 +805,13 @@ export function PlanilhaComparar({
                 </tr>
               )
             })}
+            <LinhaNovoItem colunas={visiveis} travada={travada} onAdicionar={onAdicionarItem} />
           </tbody>
           <tfoot>
             <tr>
+              <td className="planilha-rodape sticky bottom-0 left-0 z-20 border-r border-t-2 border-ink-300" />
               {visiveis.map((c, i) => (
-                <td key={c.chave} className={`planilha-rodape sticky bottom-0 z-10 border-r border-t-2 border-ink-300 px-1.5 py-1 text-right font-bold tabular-nums text-ink-900 ${i === 0 ? 'left-0 z-20 text-left' : ''}`}>
+                <td key={c.chave} className={`planilha-rodape sticky bottom-0 z-10 border-r border-t-2 border-ink-300 px-1.5 py-1 text-right font-bold tabular-nums text-ink-900 ${i === 0 ? 'left-8 z-20 text-left' : ''}`}>
                   {i === 0 ? (mostradas.length === linhas.length ? 'TOTAL' : 'TOTAL (filtrado)') : rodape(c)}
                 </td>
               ))}
