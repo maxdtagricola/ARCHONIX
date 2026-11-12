@@ -1,7 +1,7 @@
 import { chromium } from 'playwright'
 import path from 'path'
 
-const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:5173/Forma-o-Pre-o-Geral/'
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:5173/ARCHONIX/'
 const SENHA = '11994044'
 const DIR = 'C:/Users/madal/OneDrive/Desktop/Formacao_Preco_Geral/pricing-app'
 

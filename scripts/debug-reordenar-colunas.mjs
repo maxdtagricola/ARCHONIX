@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 
-const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:4321/Forma-o-Pre-o-Geral/'
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:4321/ARCHONIX/'
 
 async function pegarOrdemColunas(page) {
   const tabela = page.locator('table').filter({ has: page.locator('th', { hasText: 'Fornecedor' }) })

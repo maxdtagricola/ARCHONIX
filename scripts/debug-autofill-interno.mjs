@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 
-const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:4321/Forma-o-Pre-o-Geral/'
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:4321/ARCHONIX/'
 
 // backend fake em memoria (o celular/Tailscale esta fora do ar agora) — imita o contrato REST
 // real usado por src/db/db.ts: GET /analises (lista tudo), PUT /analises/:id (upsert), DELETE

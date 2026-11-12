@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 
-const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:4321/Forma-o-Pre-o-Geral/'
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:4321/ARCHONIX/'
 
 // Registro de cotação real (formato atual, com "items"), mas com um item cujo estadoOrigem
 // ficou vazio — simula um item salvo antes do seletor de UF existir de fato, ou nunca preenchido.

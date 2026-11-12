@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 
-const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:5173/Forma-o-Pre-o-Geral/'
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://127.0.0.1:5173/ARCHONIX/'
 
 async function main() {
   const browser = await chromium.launch()
