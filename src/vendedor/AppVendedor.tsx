@@ -7,6 +7,8 @@ import { guardarMinutosDoVendedor } from '../components/SaidaAutomatica'
 import { getStatusColors } from '../db/configRepo'
 import { avisar } from '../dialogs'
 import { BotaoTema } from '../components/BotaoTema'
+import { BotaoNotificacoes } from '../components/NotificacoesDoSistema'
+import { notificar } from '../notificacoesDoSistema'
 import { caminhoSemVoltas, carregarStatusConfig, nomeDoStatus, ordemComExtras, statusDe, useVersaoStatus } from '../statusConfig'
 import { corPadraoDoStatus, corTexto } from '../statusColors'
 import { formatCurrency, formatDate, makeId } from '../utils'
@@ -204,6 +206,18 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
     () => (previa || !vistos ? [] : (cotacoes ?? []).filter((c) => c.valoresEnviados && vistos[c.id] !== versaoDosValores(c.valoresEnviados))),
     [previa, vistos, cotacoes],
   )
+  // também no canto da tela do sistema (se ele ligou o sino do topo): um aviso por envio novo; clicar
+  // traz o site pra frente, já no cartão da cotação
+  useEffect(() => {
+    for (const c of comValoresNovos) {
+      notificar(`valores:${c.id}:${versaoDosValores(c.valoresEnviados)}`, {
+        titulo: `Chegaram os valores da ${c.codigo}`,
+        texto: `${c.cliente}${c.maquina ? ` · ${c.maquina}` : ''} — marca, prazo e valores de venda. Abra a cotação pra ver e mandar ao cliente.`,
+        etiqueta: `valores:${c.id}`,
+        aoClicar: () => document.querySelector(`article[aria-label="Cotação ${c.codigo}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+      })
+    }
+  }, [comValoresNovos])
   function marcarVisto(c: CotacaoDoVendedor) {
     if (previa || !vistos || !c.valoresEnviados || vistos[c.id] === versaoDosValores(c.valoresEnviados)) return
     const novos = { ...vistos, [c.id]: versaoDosValores(c.valoresEnviados) }
@@ -236,6 +250,8 @@ export function AppVendedor({ usuario, previa }: { usuario: UsuarioLogado; previ
         </div>
         {!previa && (
           <div className="flex items-center gap-4">
+            {/* os valores novos também no canto da tela do sistema — vale só neste aparelho */}
+            <BotaoNotificacoes />
             {/* o mesmo modo claro/escuro do menu da equipe — vale só neste aparelho */}
             <BotaoTema />
             <button type="button" onClick={() => setMostrarMinhaConta(true)} className="text-xs text-ink-500 underline hover:text-ink-700">

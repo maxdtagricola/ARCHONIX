@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sair } from '../auth'
 import { avisar } from '../dialogs'
+import { notificar } from '../notificacoesDoSistema'
 import { CHAVE_ULTIMA_ATIVIDADE, getSessao } from '../sessaoUsuario'
 
 // Saída automática: sem atividade no site (mouse, toque, tecla, rolagem) pelo tempo escolhido em
@@ -66,9 +67,17 @@ export function SaidaAutomatica() {
   const [segundosRestantes, setSegundosRestantes] = useState<number | null>(null)
 
   useEffect(() => {
-    function sairPorInatividade(minutos: number) {
+    function sairPorInatividade(minutos: number, ultima?: number) {
       if (saindo.current) return
       saindo.current = true
+      // com o site em segundo plano, o aviso do sistema (antes de sair, que ainda se sabe quem era)
+      if (ultima !== undefined) {
+        notificar(`saiu:${ultima}`, {
+          titulo: 'Saída automática',
+          texto: `Você saiu do Archonix depois de ${minutos} minutos sem atividade. É só entrar de novo.`,
+          etiqueta: 'saida',
+        })
+      }
       void sair().then(() =>
         avisar(`Você saiu do site depois de ${minutos} minutos sem atividade. É só entrar de novo.`, {
           titulo: 'Saída automática',
@@ -109,8 +118,21 @@ export function SaidaAutomatica() {
       const ultima = Math.max(ultimaAtividade.current, lerNumero(CHAVE_ULTIMA_ATIVIDADE) ?? 0)
       const restante = minutos * 60 * 1000 - (Date.now() - ultima)
       if (restante <= 0) {
-        sairPorInatividade(minutos)
+        sairPorInatividade(minutos, ultima)
         return
+      }
+      if (restante <= AVISO_ANTES_MS) {
+        // o aviso também no canto da tela do sistema; clicar nele conta como atividade
+        notificar(`saida:${ultima}`, {
+          titulo: 'Saída automática',
+          texto: `Sem atividade: você sai do Archonix em ${Math.ceil(restante / 1000)} segundos. Clique aqui pra continuar conectado.`,
+          etiqueta: 'saida',
+          aoClicar: () => {
+            gravadaEm.current = 0
+            anotar()
+            setSegundosRestantes(null)
+          },
+        })
       }
       setSegundosRestantes(restante <= AVISO_ANTES_MS ? Math.ceil(restante / 1000) : null)
     }, 1000)

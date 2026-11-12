@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EVENTO_COTACAO_ALTERADA, listQuotes, marcarAlteracoesVistas } from '../db/analysesRepo'
 import { alteracoesNaoVistas, resumoDosCampos } from '../alteracoesVendedor'
 import { avisar } from '../dialogs'
+import { notificar } from '../notificacoesDoSistema'
 import { formatDate } from '../utils'
 import type { QuoteRecord } from '../types'
 
@@ -58,6 +59,21 @@ export function AvisoAlteracoesVendedor({ nome, onAbrir }: { nome: string; onAbr
         .sort((a, b) => b.alteracoes[b.alteracoes.length - 1].em - a.alteracoes[a.alteracoes.length - 1].em),
     [quotes, nome],
   )
+
+  // também no canto da tela do sistema (se ligado em Configurações › Notificações): um aviso por
+  // alteração nova; clicar abre a cotação
+  useEffect(() => {
+    for (const { r, alteracoes } of avisos) {
+      const ultima = alteracoes[alteracoes.length - 1]
+      notificar(`alteracao:${r.id}:${ultima.em}`, {
+        titulo: `${ultima.por} alterou a ${r.codigo || 'cotação'}`,
+        texto: `${r.cliente || '(sem cliente)'} — ${resumoDosCampos(alteracoes)}`,
+        etiqueta: `alteracao:${r.id}`,
+        aoClicar: () => onAbrir(r),
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avisos])
 
   if (avisos.length === 0) return null
   const visiveis = verTodas ? avisos : avisos.slice(0, LINHAS_VISIVEIS)

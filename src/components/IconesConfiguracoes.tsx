@@ -41,6 +41,14 @@ export const ICONES_CONFIG = {
       <path d="M17 6.2 21 4M19.2 3.2 21 4l-.8 1.8" />
     </Icone>
   ),
+  // sino (os avisos no canto da tela do sistema)
+  notificacoes: (
+    <Icone>
+      <path d="M6 10a6 6 0 0 1 12 0c0 4.5 1.8 6 1.8 6H4.2S6 14.5 6 10z" />
+      <path d="M10.2 19.5a2 2 0 0 0 3.6 0" />
+      <path d="M12 2.5V4" />
+    </Icone>
+  ),
   // duas pessoas
   usuarios: (
     <Icone>

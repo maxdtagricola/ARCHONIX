@@ -36,6 +36,7 @@ import { RestaurarBackupCard } from '../components/RestaurarBackupCard'
 import { TelaDosVendedoresCard } from '../components/TelaDosVendedoresCard'
 import { useSessao } from '../sessaoUsuario'
 import { MinhaContaForm } from '../components/MinhaContaModal'
+import { PainelNotificacoes } from '../components/NotificacoesDoSistema'
 import { ICONES_CONFIG } from '../components/IconesConfiguracoes'
 import { useFecharComEsc } from '../teclaEsc'
 import { useEstadoPersistente } from '../estadoPersistente'
@@ -51,7 +52,7 @@ const estadoOptions = ESTADOS.map((e) => ({ value: e.uf, label: `${e.uf} — ${e
 type SecaoConfig = keyof typeof ICONES_CONFIG
 
 /** As partes de cada um (ou deste aparelho) — aparecem mesmo pra quem não tem as Configurações gerais. */
-const SECOES_PESSOAIS: SecaoConfig[] = ['conta', 'saida', 'fundo']
+const SECOES_PESSOAIS: SecaoConfig[] = ['conta', 'saida', 'notificacoes', 'fundo']
 /** Só pro gestor (o Max): quem usa o site, as funções de usuário, a tela dos vendedores, os status e a
  * restauração de backup. */
 const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'telaVendedores', 'statusCotacoes', 'statusNotas', 'restaurarBackup']
@@ -60,6 +61,7 @@ const SECOES_DO_GESTOR: SecaoConfig[] = ['usuarios', 'tiposUsuario', 'telaVended
 const SECOES: { id: SecaoConfig; titulo: string; resumo: string; icone: ReactNode }[] = [
   { id: 'conta', titulo: 'Minha conta', resumo: 'Trocar a sua senha e o e-mail de recuperação', icone: ICONES_CONFIG.conta },
   { id: 'saida', titulo: 'Saída automática', resumo: 'Sair sozinho depois de um tempo sem uso', icone: ICONES_CONFIG.saida },
+  { id: 'notificacoes', titulo: 'Notificações', resumo: 'Os avisos também no canto da tela do Windows', icone: ICONES_CONFIG.notificacoes },
   { id: 'usuarios', titulo: 'Usuários', resumo: 'Cadastrar, função, permissões e nova senha', icone: ICONES_CONFIG.usuarios },
   { id: 'tiposUsuario', titulo: 'Funções de usuário', resumo: 'O que cada função acessa (e quem é administrador)', icone: ICONES_CONFIG.tiposUsuario },
   { id: 'telaVendedores', titulo: 'Tela dos vendedores', resumo: 'Ver como o vendedor vê e escolher o que aparece', icone: ICONES_CONFIG.telaVendedores },
@@ -402,6 +404,8 @@ export function ConfiguracoesPage({
             </div>
           </fieldset>
         )
+      case 'notificacoes':
+        return <PainelNotificacoes />
       case 'usuarios':
         return <UsuariosCard embutido />
       case 'telaVendedores':
@@ -714,8 +718,8 @@ export function ConfiguracoesPage({
       <div className="card">
         <h2 className="font-display text-lg font-semibold text-ink-900 mb-1">Configurações</h2>
         <p className="text-sm text-ink-400">
-          Clique num símbolo pra abrir — fecha no ✕ ou com a tecla Esc. Minha conta é só sua, e Saída automática e Vídeo
-          de fundo valem só neste aparelho; o resto vale pra todos os admins.
+          Clique num símbolo pra abrir — fecha no ✕ ou com a tecla Esc. Minha conta é só sua, e Saída automática,
+          Notificações e Vídeo de fundo valem só neste aparelho; o resto vale pra todos os admins.
         </p>
       </div>
 

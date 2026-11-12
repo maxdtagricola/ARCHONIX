@@ -45,6 +45,7 @@ import { AvisoEntregas } from './components/AvisoEntregas'
 import { useEstadoPersistente } from './estadoPersistente'
 import { DIAS_PARA_RETORNO, cotacoesEsperandoRetorno } from './retornoCotacao'
 import { avisar, confirmar } from './dialogs'
+import { notificar } from './notificacoesDoSistema'
 import { createQuoteItem } from './types'
 import type { ItemCotacaoImportado } from './quoteImport'
 import type {
@@ -221,6 +222,10 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
         const esperando = cotacoesEsperandoRetorno(lista, currentAdmin)
         if (esperando.length === 0) return
         const codigos = esperando.map((r) => r.codigo || r.cliente).join(', ')
+        notificar(`retorno:${chave}`, {
+          titulo: 'Retorno do cliente',
+          texto: `${esperando.length === 1 ? 'Uma cotação enviada' : `${esperando.length} cotações enviadas`} há ${DIAS_PARA_RETORNO} dias ou mais ainda sem retorno: ${codigos}.`,
+        })
         const ver = await confirmar(
           `${esperando.length === 1 ? 'Uma cotação enviada' : `${esperando.length} cotações enviadas`} por você há ${DIAS_PARA_RETORNO} dias ou mais ` +
             `${esperando.length === 1 ? 'ainda está' : 'ainda estão'} como ${nomeDoStatus('ENVIADO')} (${codigos}).\n\n` +
@@ -245,11 +250,11 @@ function AppAdmin({ usuario }: { usuario: UsuarioLogado }) {
       .then((lista) => {
         const pendentes = lista.filter((u) => u.pendente)
         if (pendentes.length === 0) return
-        void avisar(
+        const texto =
           `${pendentes.map((u) => u.exibicao).join(', ')} se ${pendentes.length > 1 ? 'cadastraram' : 'cadastrou'} no site e ` +
-            `${pendentes.length > 1 ? 'esperam' : 'espera'} você definir a função. Veja em Configurações › Usuários.`,
-          { titulo: 'Novos usuários' },
-        )
+          `${pendentes.length > 1 ? 'esperam' : 'espera'} você definir a função. Veja em Configurações › Usuários.`
+        notificar(`cadastros:${pendentes.map((u) => u.login).join(',')}`, { titulo: 'Novos usuários', texto })
+        void avisar(texto, { titulo: 'Novos usuários' })
       })
       .catch(() => {})
   }, [usuario.gestor])

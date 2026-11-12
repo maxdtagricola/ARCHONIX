@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EVENTO_COTACAO_ALTERADA, listQuotes } from '../db/analysesRepo'
 import { useVersaoFeriados } from '../diasUteis'
-import { assinaturaDosAvisos, avisosDeEntrega, type SituacaoEntrega } from '../avisosEntrega'
+import { assinaturaDosAvisos, avisosDeEntrega, type AvisoEntrega, type SituacaoEntrega } from '../avisosEntrega'
+import { notificar } from '../notificacoesDoSistema'
 import { situacaoDaPrevisao } from './TransporteFornecedor'
 import type { QuoteRecord } from '../types'
 
@@ -28,6 +29,12 @@ function lerDispensado(): string {
   } catch {
     return ''
   }
+}
+
+function contar(avisos: AvisoEntrega[]): Record<SituacaoEntrega, number> {
+  const contagem: Record<SituacaoEntrega, number> = { atrasada: 0, hoje: 0, proxima: 0 }
+  for (const a of avisos) contagem[a.situacao]++
+  return contagem
 }
 
 function resumo(contagem: Record<SituacaoEntrega, number>): string {
@@ -112,10 +119,25 @@ export function AvisoEntregas({ aba, onAbrir }: { aba: string; onAbrir: (cotacao
     }
   }, [visivel])
 
+  // também no canto da tela do sistema (se ligado em Configurações › Notificações): uma vez a cada lista
+  // nova — a mesma regra do "×" daqui (outra nota, nota que mudou de situação, ou o dia seguinte)
+  useEffect(() => {
+    if (!visivel) return
+    notificar(`entregas:${assinatura}`, {
+      titulo: 'Entrega de notas',
+      texto: [
+        resumo(contar(avisos)),
+        ...avisos.slice(0, 3).map((a) => `${a.notaFiscal ? `NF ${a.notaFiscal}` : 'NF não informada'} · ${a.codigo} — ${SELO[a.situacao].texto}`),
+      ].join('\n'),
+      etiqueta: 'entregas',
+      aoClicar: avisos.length === 1 ? () => onAbrir(avisos[0].cotacaoId) : undefined,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visivel, assinatura])
+
   if (!visivel) return null
 
-  const contagem: Record<SituacaoEntrega, number> = { atrasada: 0, hoje: 0, proxima: 0 }
-  for (const a of avisos) contagem[a.situacao]++
+  const contagem = contar(avisos)
   const pior: SituacaoEntrega = contagem.atrasada ? 'atrasada' : contagem.hoje ? 'hoje' : 'proxima'
   const visiveis = verTodas ? avisos : avisos.slice(0, LINHAS_VISIVEIS)
 
